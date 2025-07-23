@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { StyleSheet, Text, View, TouchableOpacity, Image, SafeAreaView, StatusBar, ScrollView, Alert, Dimensions, ActivityIndicator } from 'react-native';
+import { StyleSheet, Text, View, TouchableOpacity, Image, SafeAreaView, StatusBar, ScrollView, Alert, Dimensions, ActivityIndicator, Modal, FlatList } from 'react-native';
 import * as MediaLibrary from 'expo-media-library';
-import { useVideoPlayer, VideoView } from 'expo-video';
+import { Video, ResizeMode } from 'expo-av';
+import { categorizePhotos, formatFileSize } from './utils/duplicateDetection';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -13,14 +14,13 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [currentPhotoUri, setCurrentPhotoUri] = useState(null);
   const [isPlaying, setIsPlaying] = useState(false);
-  
-  // Video player for current video
-  const player = useVideoPlayer(currentPhotoUri, (player) => {
-    if (photos[currentIndex]?.mediaType === 'video' && currentPhotoUri) {
-      player.loop = true;
-      player.volume = 1;
-    }
-  });
+  const [videoSource, setVideoSource] = useState(null);
+  const [viewMode, setViewMode] = useState('swipe'); // 'swipe', 'categories'
+  const [categoryData, setCategoryData] = useState(null);
+  const [selectedCategory, setSelectedCategory] = useState(null);
+  const [selectedDuplicateGroup, setSelectedDuplicateGroup] = useState(null);
+  const [categoryMediaView, setCategoryMediaView] = useState(null);
+  const videoRef = useRef(null);
 
   useEffect(() => {
     checkPermissions();
@@ -32,10 +32,32 @@ export default function App() {
       const photo = photos[currentIndex];
       if (photo) {
         try {
-          const assetInfo = await MediaLibrary.getAssetInfoAsync(photo);
-          setCurrentPhotoUri(assetInfo.localUri || assetInfo.uri);
+          if (photo.mediaType === 'video') {
+            // For videos, get the full asset info to get localUri
+            const assetInfo = await MediaLibrary.getAssetInfoAsync(photo);
+            let videoUri = assetInfo.localUri || assetInfo.uri;
+            
+            // Clean the URI by removing the fragment
+            if (videoUri.includes('#')) {
+              videoUri = videoUri.split('#')[0];
+            }
+            
+            setCurrentPhotoUri(videoUri);
+            setVideoSource(videoUri);
+          } else {
+            // For photos, get the full asset info for better quality
+            const assetInfo = await MediaLibrary.getAssetInfoAsync(photo);
+            setCurrentPhotoUri(assetInfo.localUri || assetInfo.uri);
+            setVideoSource(null);
+          }
         } catch (error) {
-          console.error('Error loading photo URI:', error);
+          // Fallback to basic uri
+          setCurrentPhotoUri(photo.uri);
+          if (photo.mediaType === 'video') {
+            setVideoSource(photo.uri);
+          } else {
+            setVideoSource(null);
+          }
         }
       }
     };
@@ -45,12 +67,6 @@ export default function App() {
     }
   }, [currentIndex, photos]);
 
-  // Monitor video player state
-  useEffect(() => {
-    if (player) {
-      setIsPlaying(player.playing);
-    }
-  }, [player?.playing]);
 
   const checkPermissions = async () => {
     const { status } = await MediaLibrary.requestPermissionsAsync();
@@ -81,20 +97,17 @@ export default function App() {
         endCursor = nextCursor;
         hasNextPage = hasMore;
         
-        // Update loading message
-        if (allAssets.length % 500 === 0) {
-          console.log(`Loading media library: ${allAssets.length} items...`);
-        }
       }
-      
-      console.log(`✓ Loaded ${allAssets.length} photos and videos`);
       
       // For now, just get info for the current photo as needed
       setPhotos(allAssets);
       setCurrentIndex(0);
+      
+      const categories = categorizePhotos(allAssets);
+      setCategoryData(categories);
+      
       setLoading(false);
     } catch (error) {
-      console.error('Error loading photos:', error);
       Alert.alert('Error', 'Failed to load photos: ' + error.message);
       setLoading(false);
     }
@@ -103,11 +116,12 @@ export default function App() {
   const handleDelete = () => {
     if (currentIndex < photos.length) {
       // Stop video if playing
-      if (player && photos[currentIndex].mediaType === 'video') {
-        player.pause();
+      if (videoRef.current && photos[currentIndex].mediaType === 'video') {
+        videoRef.current.pauseAsync();
       }
       setDeletedPhotos([...deletedPhotos, photos[currentIndex]]);
       setCurrentPhotoUri(null); // Clear current photo
+      setVideoSource(null); // Clear video source
       setIsPlaying(false);
       setCurrentIndex(currentIndex + 1);
     }
@@ -116,10 +130,11 @@ export default function App() {
   const handleKeep = () => {
     if (currentIndex < photos.length) {
       // Stop video if playing
-      if (player && photos[currentIndex].mediaType === 'video') {
-        player.pause();
+      if (videoRef.current && photos[currentIndex].mediaType === 'video') {
+        videoRef.current.pauseAsync();
       }
       setCurrentPhotoUri(null); // Clear current photo
+      setVideoSource(null); // Clear video source
       setIsPlaying(false);
       setCurrentIndex(currentIndex + 1);
     }
@@ -160,6 +175,45 @@ export default function App() {
     );
   }
 
+
+  const renderCategoriesView = () => {
+    if (!categoryData) return null;
+
+    const categoryInfo = {
+      screenshot: { emoji: '📱', label: 'Screenshots' },
+      whatsapp: { emoji: '💬', label: 'WhatsApp' },
+      camera: { emoji: '📷', label: 'Camera' },
+      downloads: { emoji: '⬇️', label: 'Social Media' },
+      video: { emoji: '🎥', label: 'Videos' },
+      other: { emoji: '📁', label: 'Other' }
+    };
+
+    return (
+      <>
+        <Text style={styles.sectionTitle}>Photos by Category</Text>
+        <View style={styles.categoryGrid}>
+          {Object.entries(categoryData).map(([category, items]) => (
+            items.length > 0 && (
+              <TouchableOpacity
+                key={category}
+                style={styles.categoryCard}
+                onPress={() => setCategoryMediaView({ category, items })}
+              >
+                <Text style={styles.categoryEmoji}>{categoryInfo[category].emoji}</Text>
+                <Text style={styles.categoryLabel}>{categoryInfo[category].label}</Text>
+                <Text style={styles.categoryCount}>{items.length} items</Text>
+                <Text style={styles.categorySize}>
+                  Tap to view
+                </Text>
+              </TouchableOpacity>
+            )
+          ))}
+        </View>
+      </>
+    );
+  };
+
+
   const currentPhoto = photos[currentIndex];
 
   return (
@@ -167,32 +221,51 @@ export default function App() {
       <StatusBar barStyle="dark-content" />
       <View style={styles.header}>
         <Text style={styles.title}>StorageSwipe</Text>
-        <Text style={styles.subtitle}>Swipe through your photos</Text>
+        <Text style={styles.subtitle}>Clean up your photo library</Text>
+      </View>
+      
+      <View style={styles.tabContainer}>
+        <TouchableOpacity 
+          style={[styles.tab, viewMode === 'swipe' && styles.activeTab]} 
+          onPress={() => setViewMode('swipe')}
+        >
+          <Text style={[styles.tabText, viewMode === 'swipe' && styles.activeTabText]}>Swipe</Text>
+        </TouchableOpacity>
+        
+        <TouchableOpacity 
+          style={[styles.tab, viewMode === 'categories' && styles.activeTab]} 
+          onPress={() => setViewMode('categories')}
+        >
+          <Text style={[styles.tabText, viewMode === 'categories' && styles.activeTabText]}>Categories</Text>
+        </TouchableOpacity>
       </View>
 
-      <ScrollView contentContainerStyle={styles.content}>
+      <View style={styles.contentContainer}>
         {loading ? (
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" color="#007AFF" />
             <Text style={styles.loadingText}>Loading your media library...</Text>
             <Text style={styles.loadingSubtext}>This might take a moment for large libraries</Text>
           </View>
-        ) : currentIndex < photos.length ? (
-          <>
+        ) : viewMode === 'swipe' && currentIndex < photos.length ? (
+          <ScrollView contentContainerStyle={styles.content}>
             <View style={styles.card}>
               {currentPhotoUri ? (
                 currentPhoto.mediaType === 'video' ? (
-                  <VideoView 
-                    player={player}
-                    style={styles.photo}
-                    contentFit="cover"
-                    nativeControls={false}
-                  />
+                  <View style={styles.videoContainer}>
+                    <View style={[styles.photo, styles.videoPlaceholder]}>
+                      <Text style={styles.videoIcon}>🎥</Text>
+                    </View>
+                    <View style={styles.videoOverlay}>
+                      <Text style={styles.videoPlayIcon}>▶️</Text>
+                      <Text style={styles.videoMessage}>Video preview</Text>
+                      <Text style={styles.videoSubMessage}>{currentPhoto.duration ? `${Math.round(currentPhoto.duration)}s` : ''}</Text>
+                    </View>
+                  </View>
                 ) : (
                   <Image 
                     source={{ uri: currentPhotoUri }} 
                     style={styles.photo}
-                    onError={(e) => console.log('Image load error:', e.nativeEvent.error)}
                   />
                 )
               ) : (
@@ -203,22 +276,6 @@ export default function App() {
               <Text style={styles.debugText}>
                 {currentPhoto.mediaType === 'video' ? '🎥 Video' : '📷 Photo'} {currentIndex + 1} of {photos.length}
               </Text>
-              {currentPhoto.mediaType === 'video' && currentPhotoUri && player && (
-                <TouchableOpacity 
-                  style={styles.playButton} 
-                  onPress={() => {
-                    if (player.playing) {
-                      player.pause();
-                      setIsPlaying(false);
-                    } else {
-                      player.play();
-                      setIsPlaying(true);
-                    }
-                  }}
-                >
-                  <Text style={styles.playButtonText}>{isPlaying ? '⏸️ Pause' : '▶️ Play'}</Text>
-                </TouchableOpacity>
-              )}
             </View>
             
             <View style={styles.buttonContainer}>
@@ -232,7 +289,11 @@ export default function App() {
             </View>
 
             <Text style={styles.counter}>{photos.length - currentIndex} photos remaining</Text>
-          </>
+          </ScrollView>
+        ) : viewMode === 'categories' ? (
+          <View style={styles.fullContainer}>
+            {renderCategoriesView()}
+          </View>
         ) : (
           <View style={styles.emptyContainer}>
             <Text style={styles.emptyText}>No more photos to review!</Text>
@@ -249,7 +310,157 @@ export default function App() {
             </Text>
           </TouchableOpacity>
         )}
-      </ScrollView>
+      </View>
+
+      {/* Duplicate Selection Modal */}
+      <Modal
+        visible={selectedDuplicateGroup !== null}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setSelectedDuplicateGroup(null)}
+      >
+        <View style={styles.modalContainer}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>Select Photos to Keep</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+              {selectedDuplicateGroup?.map((photo, index) => (
+                <TouchableOpacity key={photo.id} style={styles.modalPhotoWrapper}>
+                  {photo.mediaType === 'video' ? (
+                    <View style={[styles.modalPhoto, styles.videoThumbnailSmall]}>
+                      <Text style={styles.videoIconSmall}>🎥</Text>
+                    </View>
+                  ) : (
+                    <Image source={{ uri: photo.uri }} style={styles.modalPhoto} />
+                  )}
+                  <Text style={styles.modalPhotoLabel}>Copy {index + 1}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+            <View style={styles.modalButtons}>
+              <TouchableOpacity 
+                style={[styles.modalButton, styles.modalDeleteButton]}
+                onPress={() => {
+                  // Delete all but the first copy
+                  const toDelete = selectedDuplicateGroup.slice(1);
+                  setDeletedPhotos([...deletedPhotos, ...toDelete]);
+                  setSelectedDuplicateGroup(null);
+                }}
+              >
+                <Text style={styles.modalButtonText}>Keep First, Delete Rest</Text>
+              </TouchableOpacity>
+              <TouchableOpacity 
+                style={[styles.modalButton, styles.modalCancelButton]}
+                onPress={() => setSelectedDuplicateGroup(null)}
+              >
+                <Text style={[styles.modalButtonText, { color: '#333' }]}>Cancel</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Category Selection Modal */}
+      <Modal
+        visible={selectedCategory !== null}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setSelectedCategory(null)}
+      >
+        <View style={styles.modalContainer}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>
+              Delete all {selectedCategory?.items.length} items in {selectedCategory?.category}?
+            </Text>
+            <Text style={styles.modalSubtitle}>
+              This will free up {selectedCategory && formatFileSize(
+                selectedCategory.items.reduce((acc, item) => acc + (item.fileSize || 0), 0)
+              )}
+            </Text>
+            <View style={styles.modalButtons}>
+              <TouchableOpacity 
+                style={[styles.modalButton, styles.modalDeleteButton]}
+                onPress={() => {
+                  setDeletedPhotos([...deletedPhotos, ...selectedCategory.items]);
+                  setSelectedCategory(null);
+                }}
+              >
+                <Text style={styles.modalButtonText}>Delete All</Text>
+              </TouchableOpacity>
+              <TouchableOpacity 
+                style={[styles.modalButton, styles.modalCancelButton]}
+                onPress={() => setSelectedCategory(null)}
+              >
+                <Text style={[styles.modalButtonText, { color: '#333' }]}>Cancel</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Category Media Viewer Modal */}
+      <Modal
+        visible={categoryMediaView !== null}
+        animationType="slide"
+        onRequestClose={() => setCategoryMediaView(null)}
+      >
+        <SafeAreaView style={styles.modalFullScreen}>
+          <View style={styles.modalHeader}>
+            <TouchableOpacity 
+              style={styles.modalBackButton} 
+              onPress={() => setCategoryMediaView(null)}
+            >
+              <Text style={styles.modalBackText}>← Back</Text>
+            </TouchableOpacity>
+            <Text style={styles.modalHeaderTitle}>
+              {categoryMediaView?.category.toUpperCase()} ({categoryMediaView?.items.length} items)
+            </Text>
+            <TouchableOpacity 
+              style={styles.modalDeleteAllButton}
+              onPress={() => {
+                setDeletedPhotos([...deletedPhotos, ...categoryMediaView.items]);
+                setCategoryMediaView(null);
+              }}
+            >
+              <Text style={styles.modalDeleteAllText}>Delete All</Text>
+            </TouchableOpacity>
+          </View>
+          
+          <FlatList
+            data={categoryMediaView?.items.filter(item => 
+              !item.uri.includes('/T/TemporaryItems/') && 
+              !item.uri.includes('NSIRD_screencaptureui')
+            ) || []}
+            numColumns={3}
+            keyExtractor={(item) => item.id}
+            renderItem={({ item }) => (
+              <TouchableOpacity 
+                style={styles.mediaGridItem}
+                onPress={() => {
+                  // Add to delete queue
+                  if (!deletedPhotos.includes(item)) {
+                    setDeletedPhotos([...deletedPhotos, item]);
+                  }
+                }}
+              >
+                <View style={[styles.mediaGridImage, styles.imagePlaceholder]}>
+                  <Text style={styles.imagePlaceholderText}>
+                    {item.mediaType === 'video' ? '🎥' : '📷'}
+                  </Text>
+                  <Text style={styles.imagePlaceholderLabel} numberOfLines={2}>
+                    {item.filename || 'Media'}
+                  </Text>
+                </View>
+                {deletedPhotos.includes(item) && (
+                  <View style={styles.selectedOverlay}>
+                    <Text style={styles.selectedText}>✓</Text>
+                  </View>
+                )}
+              </TouchableOpacity>
+            )}
+            contentContainerStyle={styles.mediaGrid}
+          />
+        </SafeAreaView>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -280,6 +491,9 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     alignItems: 'center',
     paddingVertical: 20,
+  },
+  contentContainer: {
+    flex: 1,
   },
   card: {
     width: SCREEN_WIDTH * 0.9,
@@ -405,6 +619,372 @@ const styles = StyleSheet.create({
   playButtonText: {
     color: 'white',
     fontSize: 16,
+    fontWeight: 'bold',
+  },
+  videoContainer: {
+    width: '100%',
+    height: '100%',
+    position: 'relative',
+  },
+  videoOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  videoPlayIcon: {
+    fontSize: 60,
+    marginBottom: 10,
+  },
+  videoMessage: {
+    color: 'white',
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginBottom: 5,
+  },
+  videoSubMessage: {
+    color: 'white',
+    fontSize: 14,
+    opacity: 0.8,
+  },
+  videoPlaceholder: {
+    backgroundColor: '#1a1a1a',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  videoIcon: {
+    fontSize: 80,
+    opacity: 0.3,
+  },
+  videoThumbnailSmall: {
+    backgroundColor: '#1a1a1a',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  videoIconSmall: {
+    fontSize: 30,
+    opacity: 0.5,
+  },
+  tabContainer: {
+    flexDirection: 'row',
+    backgroundColor: 'white',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0',
+  },
+  tab: {
+    flex: 1,
+    paddingVertical: 10,
+    alignItems: 'center',
+  },
+  activeTab: {
+    borderBottomWidth: 2,
+    borderBottomColor: '#007AFF',
+  },
+  tabText: {
+    fontSize: 14,
+    color: '#666',
+  },
+  activeTabText: {
+    color: '#007AFF',
+    fontWeight: '600',
+  },
+  fullContainer: {
+    flex: 1,
+    width: '100%',
+    paddingHorizontal: 20,
+  },
+  sectionTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#333',
+    marginBottom: 15,
+  },
+  sectionSubtitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#666',
+    marginTop: 20,
+    marginBottom: 10,
+  },
+  duplicateGroup: {
+    backgroundColor: 'white',
+    borderRadius: 10,
+    marginBottom: 10,
+    padding: 15,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.2,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  duplicatePreview: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  duplicateThumbnail: {
+    width: 60,
+    height: 60,
+    borderRadius: 8,
+  },
+  duplicateInfo: {
+    marginLeft: 15,
+    flex: 1,
+  },
+  duplicateText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
+  },
+  duplicateSubtext: {
+    fontSize: 14,
+    color: '#666',
+    marginTop: 2,
+  },
+  duplicateSavings: {
+    fontSize: 14,
+    color: '#44bb44',
+    marginTop: 2,
+    fontWeight: '600',
+  },
+  categoryGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+  },
+  categoryCard: {
+    width: '48%',
+    backgroundColor: 'white',
+    borderRadius: 10,
+    padding: 20,
+    marginBottom: 15,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.2,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  categoryEmoji: {
+    fontSize: 40,
+    marginBottom: 10,
+  },
+  categoryLabel: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 5,
+  },
+  categoryCount: {
+    fontSize: 14,
+    color: '#666',
+  },
+  categorySize: {
+    fontSize: 12,
+    color: '#007AFF',
+    marginTop: 2,
+  },
+  modalContainer: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    backgroundColor: 'white',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 20,
+    minHeight: 300,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#333',
+    marginBottom: 15,
+    textAlign: 'center',
+  },
+  modalSubtitle: {
+    fontSize: 16,
+    color: '#666',
+    marginBottom: 20,
+    textAlign: 'center',
+  },
+  modalPhotoWrapper: {
+    marginRight: 10,
+    alignItems: 'center',
+  },
+  modalPhoto: {
+    width: 100,
+    height: 100,
+    borderRadius: 8,
+    marginBottom: 5,
+  },
+  modalPhotoLabel: {
+    fontSize: 12,
+    color: '#666',
+  },
+  modalButtons: {
+    marginTop: 20,
+  },
+  modalButton: {
+    padding: 15,
+    borderRadius: 10,
+    marginBottom: 10,
+    alignItems: 'center',
+  },
+  modalDeleteButton: {
+    backgroundColor: '#ff4444',
+  },
+  modalCancelButton: {
+    backgroundColor: '#e0e0e0',
+  },
+  modalButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: 'white',
+  },
+  modalFullScreen: {
+    flex: 1,
+    backgroundColor: 'white',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 15,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0',
+  },
+  modalBackButton: {
+    padding: 5,
+  },
+  modalBackText: {
+    fontSize: 16,
+    color: '#007AFF',
+  },
+  modalHeaderTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
+  },
+  modalDeleteAllButton: {
+    padding: 5,
+  },
+  modalDeleteAllText: {
+    fontSize: 16,
+    color: '#ff4444',
+    fontWeight: '600',
+  },
+  mediaGrid: {
+    padding: 2,
+  },
+  mediaGridItem: {
+    flex: 1,
+    margin: 1,
+    aspectRatio: 1,
+  },
+  mediaGridImage: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 2,
+  },
+  selectedOverlay: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    backgroundColor: '#44bb44',
+    borderRadius: 12,
+    width: 24,
+    height: 24,
+    justifyContent: 'center',
+    alignItems: 'center',
+    margin: 4,
+  },
+  selectedText: {
+    color: 'white',
+    fontSize: 14,
+    fontWeight: 'bold',
+  },
+  duplicateGroupTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 10,
+  },
+  duplicateScrollView: {
+    marginBottom: 10,
+  },
+  duplicateImageWrapper: {
+    marginRight: 10,
+    position: 'relative',
+  },
+  duplicateImage: {
+    width: 80,
+    height: 80,
+    borderRadius: 8,
+  },
+  duplicateImageLabel: {
+    position: 'absolute',
+    bottom: 2,
+    left: 2,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    color: 'white',
+    fontSize: 10,
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+    borderRadius: 3,
+  },
+  duplicateMoreIndicator: {
+    width: 80,
+    height: 80,
+    borderRadius: 8,
+    backgroundColor: '#f0f0f0',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: '#ddd',
+    borderStyle: 'dashed',
+  },
+  duplicateMoreText: {
+    fontSize: 12,
+    color: '#666',
+    textAlign: 'center',
+  },
+  selectAllButton: {
+    backgroundColor: '#ff4444',
+    padding: 10,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  selectAllText: {
+    color: 'white',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  imagePlaceholder: {
+    backgroundColor: '#f5f5f5',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 5,
+  },
+  imagePlaceholderText: {
+    fontSize: 20,
+    marginBottom: 2,
+  },
+  imagePlaceholderLabel: {
+    fontSize: 8,
+    color: '#666',
+    textAlign: 'center',
+  },
+  duplicateImageNumber: {
+    fontSize: 10,
+    color: '#333',
     fontWeight: 'bold',
   },
 });
