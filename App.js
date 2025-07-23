@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { StyleSheet, Text, View, TouchableOpacity, Image, SafeAreaView, StatusBar, ScrollView, Alert, Dimensions, ActivityIndicator, Modal, FlatList } from 'react-native';
+import { StyleSheet, Text, View, TouchableOpacity, Image, SafeAreaView, StatusBar, ScrollView, Alert, Dimensions, ActivityIndicator, Modal, FlatList, Animated } from 'react-native';
 import * as MediaLibrary from 'expo-media-library';
 import { Video, ResizeMode } from 'expo-av';
 import { categorizePhotos, formatFileSize } from './utils/duplicateDetection';
+import { Image as ExpoImage } from 'expo-image';
+import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -21,49 +23,62 @@ export default function App() {
   const [selectedDuplicateGroup, setSelectedDuplicateGroup] = useState(null);
   const [categoryMediaView, setCategoryMediaView] = useState(null);
   const videoRef = useRef(null);
+  
+  // Animation values for swipe gestures
+  const translateX = useRef(new Animated.Value(0)).current;
+  const rotate = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     checkPermissions();
   }, []);
 
+  // Optimized photo loading function
+  const loadPhotoUri = async (photo) => {
+    if (!photo) return;
+    
+    try {
+      if (photo.mediaType === 'video') {
+        // For videos, get the full asset info to get localUri
+        const assetInfo = await MediaLibrary.getAssetInfoAsync(photo);
+        let videoUri = assetInfo.localUri || assetInfo.uri;
+        
+        // Clean the URI by removing the fragment
+        if (videoUri.includes('#')) {
+          videoUri = videoUri.split('#')[0];
+        }
+        
+        setCurrentPhotoUri(videoUri);
+        setVideoSource(videoUri);
+      } else {
+        // For photos, get the full asset info for better quality
+        const assetInfo = await MediaLibrary.getAssetInfoAsync(photo);
+        setCurrentPhotoUri(assetInfo.localUri || assetInfo.uri);
+        setVideoSource(null);
+      }
+    } catch (error) {
+      // Fallback to basic uri
+      setCurrentPhotoUri(photo.uri);
+      if (photo.mediaType === 'video') {
+        setVideoSource(photo.uri);
+      } else {
+        setVideoSource(null);
+      }
+    }
+  };
+
   // Load photo URI when index changes - ALL hooks must be before conditional returns
   useEffect(() => {
-    const loadCurrentPhotoUri = async () => {
-      const photo = photos[currentIndex];
-      if (photo) {
-        try {
-          if (photo.mediaType === 'video') {
-            // For videos, get the full asset info to get localUri
-            const assetInfo = await MediaLibrary.getAssetInfoAsync(photo);
-            let videoUri = assetInfo.localUri || assetInfo.uri;
-            
-            // Clean the URI by removing the fragment
-            if (videoUri.includes('#')) {
-              videoUri = videoUri.split('#')[0];
-            }
-            
-            setCurrentPhotoUri(videoUri);
-            setVideoSource(videoUri);
-          } else {
-            // For photos, get the full asset info for better quality
-            const assetInfo = await MediaLibrary.getAssetInfoAsync(photo);
-            setCurrentPhotoUri(assetInfo.localUri || assetInfo.uri);
-            setVideoSource(null);
-          }
-        } catch (error) {
-          // Fallback to basic uri
-          setCurrentPhotoUri(photo.uri);
-          if (photo.mediaType === 'video') {
-            setVideoSource(photo.uri);
-          } else {
-            setVideoSource(null);
-          }
-        }
-      }
-    };
-    
     if (photos.length > 0 && currentIndex < photos.length) {
-      loadCurrentPhotoUri();
+      // Load current photo immediately
+      loadPhotoUri(photos[currentIndex]);
+      
+      // Preload next photo for faster transitions
+      if (currentIndex + 1 < photos.length) {
+        setTimeout(() => {
+          // Preload next photo asset info in background
+          MediaLibrary.getAssetInfoAsync(photos[currentIndex + 1]).catch(() => {});
+        }, 100);
+      }
     }
   }, [currentIndex, photos]);
 
@@ -120,10 +135,15 @@ export default function App() {
         videoRef.current.pauseAsync();
       }
       setDeletedPhotos([...deletedPhotos, photos[currentIndex]]);
-      setCurrentPhotoUri(null); // Clear current photo
-      setVideoSource(null); // Clear video source
-      setIsPlaying(false);
-      setCurrentIndex(currentIndex + 1);
+      const nextIndex = currentIndex + 1;
+      setCurrentIndex(nextIndex);
+      
+      // Preload next photo immediately for faster display
+      if (nextIndex < photos.length) {
+        loadPhotoUri(photos[nextIndex]);
+      }
+      
+      resetAnimation();
     }
   };
 
@@ -133,10 +153,15 @@ export default function App() {
       if (videoRef.current && photos[currentIndex].mediaType === 'video') {
         videoRef.current.pauseAsync();
       }
-      setCurrentPhotoUri(null); // Clear current photo
-      setVideoSource(null); // Clear video source
-      setIsPlaying(false);
-      setCurrentIndex(currentIndex + 1);
+      const nextIndex = currentIndex + 1;
+      setCurrentIndex(nextIndex);
+      
+      // Preload next photo immediately for faster display
+      if (nextIndex < photos.length) {
+        loadPhotoUri(photos[nextIndex]);
+      }
+      
+      resetAnimation();
     }
   };
 
@@ -214,10 +239,65 @@ export default function App() {
   };
 
 
+  // Reset animation values when photo changes
+  const resetAnimation = () => {
+    Animated.parallel([
+      Animated.spring(translateX, { toValue: 0, useNativeDriver: true }),
+      Animated.spring(rotate, { toValue: 0, useNativeDriver: true })
+    ]).start();
+  };
+
+  // Handle swipe gestures with new Gesture API
+  const panGesture = Gesture.Pan()
+    .onUpdate((event) => {
+      translateX.setValue(event.translationX);
+      rotate.setValue(event.translationX * 0.1); // Rotate based on swipe distance
+    })
+    .onEnd((event) => {
+      const { translationX: tx, velocityX } = event;
+      
+      // Swipe left (delete) - threshold for swipe detection
+      if (tx < -100 || velocityX < -500) {
+        Animated.spring(translateX, { 
+          toValue: -SCREEN_WIDTH, 
+          useNativeDriver: true 
+        }).start(() => handleDelete());
+      }
+      // Swipe right (keep) - threshold for swipe detection  
+      else if (tx > 100 || velocityX > 500) {
+        Animated.spring(translateX, { 
+          toValue: SCREEN_WIDTH, 
+          useNativeDriver: true 
+        }).start(() => handleKeep());
+      }
+      // Snap back if not enough swipe
+      else {
+        Animated.parallel([
+          Animated.spring(translateX, { toValue: 0, useNativeDriver: true }),
+          Animated.spring(rotate, { toValue: 0, useNativeDriver: true })
+        ]).start();
+      }
+    });
+
+  // Animated style for the card
+  const animatedCardStyle = {
+    transform: [
+      { translateX: translateX },
+      { 
+        rotate: rotate.interpolate({
+          inputRange: [-SCREEN_WIDTH, 0, SCREEN_WIDTH],
+          outputRange: ['-30deg', '0deg', '30deg'],
+          extrapolate: 'clamp'
+        })
+      }
+    ],
+  };
+
   const currentPhoto = photos[currentIndex];
 
   return (
-    <SafeAreaView style={styles.container}>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" />
       <View style={styles.header}>
         <Text style={styles.title}>StorageSwipe</Text>
@@ -249,34 +329,36 @@ export default function App() {
           </View>
         ) : viewMode === 'swipe' && currentIndex < photos.length ? (
           <ScrollView contentContainerStyle={styles.content}>
-            <View style={styles.card}>
-              {currentPhotoUri ? (
-                currentPhoto.mediaType === 'video' ? (
-                  <View style={styles.videoContainer}>
-                    <View style={[styles.photo, styles.videoPlaceholder]}>
-                      <Text style={styles.videoIcon}>🎥</Text>
+            <GestureDetector gesture={panGesture}>
+              <Animated.View style={[styles.card, animatedCardStyle]}>
+                {currentPhotoUri ? (
+                  currentPhoto.mediaType === 'video' ? (
+                    <View style={styles.videoContainer}>
+                      <View style={[styles.photo, styles.videoPlaceholder]}>
+                        <Text style={styles.videoIcon}>🎥</Text>
+                      </View>
+                      <View style={styles.videoOverlay}>
+                        <Text style={styles.videoPlayIcon}>▶️</Text>
+                        <Text style={styles.videoMessage}>Video preview</Text>
+                        <Text style={styles.videoSubMessage}>{currentPhoto.duration ? `${Math.round(currentPhoto.duration)}s` : ''}</Text>
+                      </View>
                     </View>
-                    <View style={styles.videoOverlay}>
-                      <Text style={styles.videoPlayIcon}>▶️</Text>
-                      <Text style={styles.videoMessage}>Video preview</Text>
-                      <Text style={styles.videoSubMessage}>{currentPhoto.duration ? `${Math.round(currentPhoto.duration)}s` : ''}</Text>
-                    </View>
-                  </View>
+                  ) : (
+                    <Image 
+                      source={{ uri: currentPhotoUri }} 
+                      style={styles.photo}
+                    />
+                  )
                 ) : (
-                  <Image 
-                    source={{ uri: currentPhotoUri }} 
-                    style={styles.photo}
-                  />
-                )
-              ) : (
-                <View style={styles.photoPlaceholder}>
-                  <ActivityIndicator size="small" color="#999" />
-                </View>
-              )}
-              <Text style={styles.debugText}>
-                {currentPhoto.mediaType === 'video' ? '🎥 Video' : '📷 Photo'} {currentIndex + 1} of {photos.length}
-              </Text>
-            </View>
+                  <View style={styles.photoPlaceholder}>
+                    <ActivityIndicator size="small" color="#999" />
+                  </View>
+                )}
+                <Text style={styles.debugText}>
+                  {currentPhoto.mediaType === 'video' ? '🎥 Video' : '📷 Photo'} {currentIndex + 1} of {photos.length}
+                </Text>
+              </Animated.View>
+            </GestureDetector>
             
             <View style={styles.buttonContainer}>
               <TouchableOpacity style={[styles.button, styles.deleteButton]} onPress={handleDelete}>
@@ -289,6 +371,10 @@ export default function App() {
             </View>
 
             <Text style={styles.counter}>{photos.length - currentIndex} photos remaining</Text>
+            
+            <View style={styles.swipeInstructions}>
+              <Text style={styles.swipeText}>💡 Swipe left to delete • Swipe right to keep</Text>
+            </View>
           </ScrollView>
         ) : viewMode === 'categories' ? (
           <View style={styles.fullContainer}>
@@ -436,20 +522,29 @@ export default function App() {
               <TouchableOpacity 
                 style={styles.mediaGridItem}
                 onPress={() => {
-                  // Add to delete queue
-                  if (!deletedPhotos.includes(item)) {
+                  // Toggle selection - add or remove from delete queue
+                  if (deletedPhotos.includes(item)) {
+                    // Remove from delete queue (uncheck)
+                    setDeletedPhotos(deletedPhotos.filter(photo => photo.id !== item.id));
+                  } else {
+                    // Add to delete queue (check)
                     setDeletedPhotos([...deletedPhotos, item]);
                   }
                 }}
               >
-                <View style={[styles.mediaGridImage, styles.imagePlaceholder]}>
-                  <Text style={styles.imagePlaceholderText}>
-                    {item.mediaType === 'video' ? '🎥' : '📷'}
-                  </Text>
-                  <Text style={styles.imagePlaceholderLabel} numberOfLines={2}>
-                    {item.filename || 'Media'}
-                  </Text>
-                </View>
+                {item.mediaType === 'video' ? (
+                  <View style={[styles.mediaGridImage, styles.videoThumbnailSmall]}>
+                    <Text style={styles.videoIconSmall}>🎥</Text>
+                  </View>
+                ) : (
+                  <ExpoImage
+                    source={{ uri: item.uri }}
+                    style={styles.mediaGridImage}
+                    contentFit="cover"
+                    transition={200}
+                    placeholder={{ uri: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChAI/hL+bhwAAAABJRU5ErkJggg==' }}
+                  />
+                )}
                 {deletedPhotos.includes(item) && (
                   <View style={styles.selectedOverlay}>
                     <Text style={styles.selectedText}>✓</Text>
@@ -461,7 +556,8 @@ export default function App() {
           />
         </SafeAreaView>
       </Modal>
-    </SafeAreaView>
+      </SafeAreaView>
+    </GestureHandlerRootView>
   );
 }
 
@@ -986,5 +1082,16 @@ const styles = StyleSheet.create({
     fontSize: 10,
     color: '#333',
     fontWeight: 'bold',
+  },
+  swipeInstructions: {
+    marginTop: 10,
+    paddingHorizontal: 20,
+    alignItems: 'center',
+  },
+  swipeText: {
+    fontSize: 14,
+    color: '#888',
+    textAlign: 'center',
+    fontStyle: 'italic',
   },
 });
