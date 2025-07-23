@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { StyleSheet, Text, View, TouchableOpacity, Image, SafeAreaView, StatusBar, ScrollView, Alert, Dimensions, ActivityIndicator, Modal, FlatList, Animated } from 'react-native';
+import { StyleSheet, Text, View, TouchableOpacity, Image, SafeAreaView, StatusBar, ScrollView, Alert, Dimensions, ActivityIndicator, Modal, FlatList, Animated, Linking } from 'react-native';
 import * as MediaLibrary from 'expo-media-library';
 import { Video, ResizeMode } from 'expo-av';
 import { categorizePhotos, formatFileSize } from './utils/duplicateDetection';
 import { Image as ExpoImage } from 'expo-image';
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
+import Svg, { Circle } from 'react-native-svg';
 // Mock in-app purchases for development - replace with real implementation for production
 const InAppPurchases = {
   connectAsync: () => Promise.resolve(),
@@ -57,7 +58,10 @@ const translations = {
     // Settings
     settings: 'Settings',
     language: 'Language',
-    selectLanguage: 'Select Language'
+    selectLanguage: 'Select Language',
+    // Free limits
+    swipesRemaining: 'swipes remaining',
+    unlimitedSwipes: 'Unlimited swipes'
   },
   es: {
     title: 'StorageSwipe',
@@ -97,7 +101,10 @@ const translations = {
     // Settings
     settings: 'Configuración',
     language: 'Idioma',
-    selectLanguage: 'Seleccionar Idioma'
+    selectLanguage: 'Seleccionar Idioma',
+    // Free limits
+    swipesRemaining: 'deslizamientos restantes',
+    unlimitedSwipes: 'Deslizamientos ilimitados'
   },
   fr: {
     title: 'StorageSwipe',
@@ -137,7 +144,10 @@ const translations = {
     // Settings
     settings: 'Paramètres',
     language: 'Langue',
-    selectLanguage: 'Sélectionner la Langue'
+    selectLanguage: 'Sélectionner la Langue',
+    // Free limits
+    swipesRemaining: 'glissements restants',
+    unlimitedSwipes: 'Glissements illimités'
   },
   ar: {
     title: 'StorageSwipe',
@@ -177,7 +187,10 @@ const translations = {
     // Settings
     settings: 'الإعدادات',
     language: 'اللغة',
-    selectLanguage: 'اختر اللغة'
+    selectLanguage: 'اختر اللغة',
+    // Free limits
+    swipesRemaining: 'سحبة متبقية',
+    unlimitedSwipes: 'سحبات غير محدودة'
   }
 };
 
@@ -213,9 +226,12 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [currentLanguage, setCurrentLanguage] = useState('en');
   
-  // Free user limits
-  const [swipeCount, setSwipeCount] = useState(0);
-  const FREE_SWIPE_LIMIT = 20; // Free users get 20 swipes
+  // All users need premium - no free tier
+  
+  // Ad overlay system
+  const [adVehicles, setAdVehicles] = useState([]);
+  const [activeAds, setActiveAds] = useState([]);
+  const MAX_CONCURRENT_ADS = 2; // Maximum vehicles on screen at once
   
   // Animation values for swipe gestures
   const translateX = useRef(new Animated.Value(0)).current;
@@ -225,11 +241,338 @@ export default function App() {
     checkPermissions();
     initializePurchases();
     loadLanguage();
-    loadSwipeCount();
+    initializeAdSystem();
   }, []);
 
   // Helper function to get translated text
   const t = (key) => translations[currentLanguage][key] || translations.en[key];
+
+  // Ad system configuration - using your custom images from assets/
+  const AD_VEHICLES = [
+    {
+      id: 'spaceship_1',
+      type: 'spaceship',
+      image: require('./assets/spaceship.png'), // Your custom spaceship image
+      lane: 1,
+      speed: 8000,
+      interval: 45000,
+      banner: 'Nike - Just Do It',
+      color: '#FF6B35',
+      url: 'https://www.nike.com',
+      hasThrottle: true // Enable throttle flames
+    },
+    {
+      id: 'plane_1', 
+      type: 'plane',
+      image: require('./assets/plane.png'), // Your custom plane image
+      lane: 2,
+      speed: 9000,
+      interval: 60000,
+      banner: 'McDonald\'s - I\'m Lovin\' It',
+      color: '#FFD700',
+      url: 'https://www.mcdonalds.com',
+      hasSmoke: true // Enable smoke trail
+    },
+    {
+      id: 'drone_1',
+      type: 'drone', 
+      image: require('./assets/drone.png'), // Your custom drone image
+      lane: 3,
+      speed: 7500,
+      interval: 75000,
+      banner: 'Coca-Cola - Open Happiness',
+      color: '#FF0000',
+      url: 'https://www.coca-cola.com',
+      hasRotor: true // Enable rotor blur effect
+    },
+    {
+      id: 'helicopter_1',
+      type: 'helicopter',
+      image: require('./assets/helicopter.png'), // Your custom helicopter image
+      lane: 4,
+      speed: 10000,
+      interval: 90000,
+      banner: 'Apple - Think Different',
+      color: '#007AFF',
+      url: 'https://www.apple.com',
+      hasRotor: true // Enable rotor blur effect
+    }
+  ];
+
+  // Initialize ad system
+  const initializeAdSystem = () => {
+    // Start each vehicle's timer
+    AD_VEHICLES.forEach(vehicle => {
+      // Random initial delay to stagger appearances
+      const initialDelay = Math.random() * 10000;
+      
+      setTimeout(() => {
+        startVehicleLoop(vehicle);
+      }, initialDelay);
+    });
+  };
+
+  // Check if vehicle type already exists on screen
+  const isDuplicateVehicle = (vehicleType) => {
+    return activeAds.some(ad => ad.type === vehicleType);
+  };
+
+  // Check if lane is clear before spawning
+  const isLaneClear = (lane, direction) => {
+    return !activeAds.some(ad => 
+      ad.lane === lane && 
+      ad.direction === direction &&
+      // Check if vehicle is still in spawn zone (within 300px of start)
+      (direction === 'left-to-right' ? 
+        ad.animatedValue._value < 300 : 
+        ad.animatedValue._value > SCREEN_WIDTH - 300)
+    );
+  };
+
+  // Start a vehicle's animation loop with traffic management
+  const startVehicleLoop = (vehicle) => {
+    const animate = () => {
+      // Check if we've reached maximum concurrent ads
+      if (activeAds.length >= MAX_CONCURRENT_ADS) {
+        // Wait and try again when screen is less busy
+        setTimeout(animate, 10000);
+        return;
+      }
+
+      // 70% chance left-to-right, 30% chance right-to-left for variety
+      const direction = Math.random() > 0.3 ? 'left-to-right' : 'right-to-left';
+      
+      // Only spawn if conditions are met:
+      // 1. Lane is clear
+      // 2. No duplicate vehicle type on screen
+      // 3. Under max concurrent limit
+      if (isLaneClear(vehicle.lane, direction) && !isDuplicateVehicle(vehicle.type)) {
+        spawnVehicle(vehicle, direction);
+      } else {
+        // If conditions not met, try again in 8 seconds
+        setTimeout(() => {
+          if (isLaneClear(vehicle.lane, direction) && 
+              !isDuplicateVehicle(vehicle.type) && 
+              activeAds.length < MAX_CONCURRENT_ADS) {
+            spawnVehicle(vehicle, direction);
+          }
+        }, 8000);
+      }
+      
+      // Schedule next appearance
+      setTimeout(animate, vehicle.interval);
+    };
+    animate();
+  };
+
+  // Spawn a single vehicle
+  const spawnVehicle = (vehicle, direction = 'left-to-right') => {
+    const vehicleId = `${vehicle.id}_${Date.now()}`;
+    const laneHeight = 200 + (vehicle.lane * 120); // Much lower on screen, bigger spacing
+    
+    // Set start and end positions based on direction
+    const isLeftToRight = direction === 'left-to-right';
+    const startX = isLeftToRight ? -200 : SCREEN_WIDTH + 200;
+    const endX = isLeftToRight ? SCREEN_WIDTH + 200 : -200;
+    
+    const animatedValue = new Animated.Value(startX);
+    
+    // Create animated values for effects
+    const throttleFlicker = new Animated.Value(1);
+    const smokeOpacity = new Animated.Value(1);
+    const rotorSpin = new Animated.Value(0);
+    
+    const newVehicle = {
+      ...vehicle,
+      id: vehicleId,
+      animatedValue,
+      laneHeight,
+      throttleFlicker,
+      smokeOpacity,
+      rotorSpin,
+      direction,
+      isFlipped: !isLeftToRight // Flip image for right-to-left flight
+    };
+    
+    setActiveAds(prev => [...prev, newVehicle]);
+    
+    // Start effect animations
+    if (vehicle.hasThrottle) {
+      // Throttle flame flickering
+      const flickerAnimation = Animated.loop(
+        Animated.sequence([
+          Animated.timing(throttleFlicker, {
+            toValue: 0.3,
+            duration: 100,
+            useNativeDriver: true
+          }),
+          Animated.timing(throttleFlicker, {
+            toValue: 1,
+            duration: 150,
+            useNativeDriver: true
+          })
+        ])
+      );
+      flickerAnimation.start();
+    }
+    
+    if (vehicle.hasSmoke) {
+      // Smoke pulsing effect
+      const smokeAnimation = Animated.loop(
+        Animated.sequence([
+          Animated.timing(smokeOpacity, {
+            toValue: 0.2,
+            duration: 800,
+            useNativeDriver: true
+          }),
+          Animated.timing(smokeOpacity, {
+            toValue: 1,
+            duration: 600,
+            useNativeDriver: true
+          })
+        ])
+      );
+      smokeAnimation.start();
+    }
+    
+    if (vehicle.hasRotor) {
+      // Rotor spinning
+      const spinAnimation = Animated.loop(
+        Animated.timing(rotorSpin, {
+          toValue: 1,
+          duration: 100,
+          useNativeDriver: true
+        })
+      );
+      spinAnimation.start();
+    }
+    
+    // Animate across screen in the correct direction
+    Animated.timing(animatedValue, {
+      toValue: endX, // Exit off-screen (left or right depending on direction)
+      duration: vehicle.speed,
+      useNativeDriver: true
+    }).start(() => {
+      // Remove from active ads when animation completes
+      setActiveAds(prev => prev.filter(ad => ad.id !== vehicleId));
+    });
+  };
+
+  // Confetti state and effects
+  const [confetti, setConfetti] = useState([]);
+  const confettiId = useRef(0);
+
+  // Generate realistic confetti burst with physics
+  const createConfetti = (startX, startY) => {
+    const particles = [];
+    const colors = ['#FF6B35', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7', '#DDA0DD', '#98FB98', '#F4A460', '#FF69B4', '#00CED1', '#FFD700', '#FF1493'];
+    const shapes = ['square', 'circle', 'triangle', 'rectangle'];
+    
+    // Create 150 particles for an absolutely MASSIVE burst!
+    for (let i = 0; i < 150; i++) {
+      const id = confettiId.current++;
+      
+      // Random initial velocity and angle for explosion effect
+      const angle = (Math.PI * 2 * i) / 150 + (Math.random() - 0.5) * 0.8;
+      const velocity = Math.random() * 200 + 100; // Slower initial burst speed
+      const gravity = 400; // Reduced gravity for slower fall
+      const drag = 0.99; // Less air resistance
+      
+      const initialVelX = Math.cos(angle) * velocity;
+      const initialVelY = Math.sin(angle) * velocity - 120; // Less upward bias for gentler arc
+      
+      const animatedValue = new Animated.ValueXY({ x: 0, y: 0 });
+      const rotation = new Animated.Value(0);
+      const opacity = new Animated.Value(1);
+      const scale = new Animated.Value(Math.random() * 0.5 + 0.5);
+      
+      particles.push({
+        id,
+        animatedValue,
+        rotation,
+        opacity,
+        scale,
+        color: colors[Math.floor(Math.random() * colors.length)],
+        shape: shapes[Math.floor(Math.random() * shapes.length)],
+        size: Math.random() * 12 + 8,
+        initialVelX,
+        initialVelY,
+        gravity,
+        drag
+      });
+      
+      // Physics-based animation with rotation and realistic falling
+      const duration = 4500 + Math.random() * 3000; // Much longer duration (4.5-7.5 seconds)
+      
+      // Calculate final position with physics
+      const finalX = startX + initialVelX * (duration / 1000) * drag;
+      const finalY = startY + initialVelY * (duration / 1000) + 0.5 * gravity * Math.pow(duration / 1000, 2);
+      
+      Animated.parallel([
+        // Position with physics curve
+        Animated.timing(animatedValue, {
+          toValue: { x: finalX - startX, y: finalY - startY },
+          duration: duration,
+          useNativeDriver: true
+        }),
+        // Slower continuous rotation (gentle wobbling in air)
+        Animated.loop(
+          Animated.timing(rotation, {
+            toValue: 1,
+            duration: 1200 + Math.random() * 800, // Slower rotation
+            useNativeDriver: true
+          })
+        ),
+        // Fade out over time
+        Animated.sequence([
+          Animated.delay(duration * 0.6), // Stay visible for 60% of flight
+          Animated.timing(opacity, {
+            toValue: 0,
+            duration: duration * 0.4,
+            useNativeDriver: true
+          })
+        ]),
+        // Gentler scale variation for flutter effect
+        Animated.loop(
+          Animated.sequence([
+            Animated.timing(scale, {
+              toValue: (Math.random() * 0.3 + 0.6) * 1.1, // Smaller scale variations
+              duration: 600 + Math.random() * 400, // Slower scale changes
+              useNativeDriver: true
+            }),
+            Animated.timing(scale, {
+              toValue: Math.random() * 0.3 + 0.6,
+              duration: 600 + Math.random() * 400,
+              useNativeDriver: true
+            })
+          ])
+        )
+      ]).start(() => {
+        // Remove particle when animation completes
+        setConfetti(prev => prev.filter(p => p.id !== id));
+      });
+    }
+    
+    setConfetti(prev => [...prev, ...particles]);
+  };
+
+  // Handle ad banner click with confetti
+  const handleAdClick = async (url, event) => {
+    // Create confetti burst at click location
+    const { pageX, pageY } = event.nativeEvent;
+    createConfetti(pageX, pageY);
+    
+    try {
+      const supported = await Linking.canOpenURL(url);
+      if (supported) {
+        await Linking.openURL(url);
+      } else {
+        Alert.alert('Error', 'Cannot open this URL');
+      }
+    } catch (error) {
+      Alert.alert('Error', 'Failed to open link');
+    }
+  };
 
   // Optimized photo loading function
   const loadPhotoUri = async (photo) => {
@@ -326,27 +669,6 @@ export default function App() {
     }
   };
 
-  // Load saved swipe count
-  const loadSwipeCount = async () => {
-    try {
-      const savedCount = await AsyncStorage.getItem('swipeCount');
-      if (savedCount) {
-        setSwipeCount(parseInt(savedCount));
-      }
-    } catch (error) {
-      console.log('Error loading swipe count:', error);
-    }
-  };
-
-  // Save swipe count
-  const saveSwipeCount = async (count) => {
-    try {
-      await AsyncStorage.setItem('swipeCount', count.toString());
-      setSwipeCount(count);
-    } catch (error) {
-      console.log('Error saving swipe count:', error);
-    }
-  };
 
   // Handle purchase
   const handlePurchase = async (productId) => {
@@ -424,12 +746,6 @@ export default function App() {
   };
 
   const handleDelete = () => {
-    // Check swipe limit for free users
-    if (!isPremium && swipeCount >= FREE_SWIPE_LIMIT) {
-      triggerPaywall();
-      return;
-    }
-
     if (currentIndex < photos.length) {
       // Stop video if playing
       if (videoRef.current && photos[currentIndex].mediaType === 'video') {
@@ -438,11 +754,6 @@ export default function App() {
       setDeletedPhotos([...deletedPhotos, photos[currentIndex]]);
       const nextIndex = currentIndex + 1;
       setCurrentIndex(nextIndex);
-      
-      // Increment swipe count for free users
-      if (!isPremium) {
-        saveSwipeCount(swipeCount + 1);
-      }
       
       // Preload next photo immediately for faster display
       if (nextIndex < photos.length) {
@@ -454,12 +765,6 @@ export default function App() {
   };
 
   const handleKeep = () => {
-    // Check swipe limit for free users
-    if (!isPremium && swipeCount >= FREE_SWIPE_LIMIT) {
-      triggerPaywall();
-      return;
-    }
-
     if (currentIndex < photos.length) {
       // Stop video if playing
       if (videoRef.current && photos[currentIndex].mediaType === 'video') {
@@ -467,11 +772,6 @@ export default function App() {
       }
       const nextIndex = currentIndex + 1;
       setCurrentIndex(nextIndex);
-      
-      // Increment swipe count for free users
-      if (!isPremium) {
-        saveSwipeCount(swipeCount + 1);
-      }
       
       // Preload next photo immediately for faster display
       if (nextIndex < photos.length) {
@@ -622,12 +922,27 @@ export default function App() {
             <Text style={styles.title}>{t('title')}</Text>
             <Text style={styles.subtitle}>{t('subtitle')}</Text>
           </View>
-          <TouchableOpacity 
-            style={styles.settingsButton}
-            onPress={() => setShowSettings(true)}
-          >
-            <Text style={styles.settingsIcon}>⚙️</Text>
-          </TouchableOpacity>
+          <View style={styles.headerButtons}>
+            {/* Reset button for testing - remove in production */}
+            {isPremium && (
+              <TouchableOpacity 
+                style={styles.resetButton}
+                onPress={async () => {
+                  await AsyncStorage.removeItem('isPremium');
+                  setIsPremium(false);
+                  Alert.alert('Reset', 'Premium status cleared for testing');
+                }}
+              >
+                <Text style={styles.resetText}>Reset</Text>
+              </TouchableOpacity>
+            )}
+            <TouchableOpacity 
+              style={styles.settingsButton}
+              onPress={() => setShowSettings(true)}
+            >
+              <Text style={styles.settingsIcon}>⚙️</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       </View>
       
@@ -658,6 +973,20 @@ export default function App() {
             <ActivityIndicator size="large" color="#007AFF" />
             <Text style={styles.loadingText}>Loading your media library...</Text>
             <Text style={styles.loadingSubtext}>This might take a moment for large libraries</Text>
+          </View>
+        ) : !isPremium ? (
+          // Show paywall for all non-premium users immediately
+          <View style={styles.paywallBlocked}>
+            <Text style={styles.paywallBlockedTitle}>🔒 Premium Required</Text>
+            <Text style={styles.paywallBlockedText}>
+              StorageSwipe requires a premium subscription to clean up your photos
+            </Text>
+            <TouchableOpacity 
+              style={styles.unlockButton}
+              onPress={() => setShowPaywall(true)}
+            >
+              <Text style={styles.unlockButtonText}>Unlock Premium Features</Text>
+            </TouchableOpacity>
           </View>
         ) : viewMode === 'swipe' && currentIndex < photos.length ? (
           <ScrollView contentContainerStyle={styles.content}>
@@ -958,6 +1287,7 @@ export default function App() {
             <Text style={styles.paywallTitle}>Unlock StorageSwipe Premium</Text>
             <Text style={styles.paywallSubtitle}>Clean up your photos like a pro</Text>
             
+            
             <View style={styles.featuresContainer}>
               <View style={styles.feature}>
                 <Text style={styles.featureIcon}>📱</Text>
@@ -969,7 +1299,7 @@ export default function App() {
               </View>
               <View style={styles.feature}>
                 <Text style={styles.featureIcon}>⚡</Text>
-                <Text style={styles.featureText}>Unlimited Photo Processing</Text>
+                <Text style={styles.featureText}>Unlimited Swipes & Processing</Text>
               </View>
               <View style={styles.feature}>
                 <Text style={styles.featureIcon}>🚫</Text>
@@ -1001,15 +1331,6 @@ export default function App() {
                 <Text style={styles.pricingSubtext}>Cancel anytime</Text>
               </TouchableOpacity>
               
-              <TouchableOpacity 
-                style={styles.pricingOption}
-                onPress={() => handlePurchase('storageswipe_lifetime')}
-                disabled={purchaseLoading}
-              >
-                <Text style={styles.pricingTitle}>Lifetime</Text>
-                <Text style={styles.pricingPrice}>$39.99</Text>
-                <Text style={styles.pricingSubtext}>One-time payment</Text>
-              </TouchableOpacity>
             </View>
             
             {purchaseLoading && (
@@ -1022,6 +1343,171 @@ export default function App() {
           </ScrollView>
         </SafeAreaView>
       </Modal>
+
+      {/* Confetti Effects */}
+      <View style={styles.confettiContainer} pointerEvents="none">
+        {confetti.map(particle => (
+          <Animated.View
+            key={particle.id}
+            style={[
+              styles.confettiParticle,
+              {
+                opacity: particle.opacity,
+                transform: [
+                  { translateX: particle.animatedValue.x },
+                  { translateY: particle.animatedValue.y },
+                  { scale: particle.scale },
+                  {
+                    rotate: particle.rotation.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: ['0deg', '360deg']
+                    })
+                  }
+                ]
+              }
+            ]}
+          >
+            {particle.shape === 'square' && (
+              <View style={[
+                styles.confettiSquare,
+                { backgroundColor: particle.color, width: particle.size, height: particle.size }
+              ]} />
+            )}
+            {particle.shape === 'circle' && (
+              <View style={[
+                styles.confettiCircle,
+                { 
+                  backgroundColor: particle.color, 
+                  width: particle.size, 
+                  height: particle.size,
+                  borderRadius: particle.size / 2
+                }
+              ]} />
+            )}
+            {particle.shape === 'triangle' && (
+              <View style={[
+                styles.confettiTriangle,
+                { 
+                  borderBottomColor: particle.color,
+                  borderBottomWidth: particle.size,
+                  borderLeftWidth: particle.size / 2,
+                  borderRightWidth: particle.size / 2
+                }
+              ]} />
+            )}
+            {particle.shape === 'rectangle' && (
+              <View style={[
+                styles.confettiRectangle,
+                { 
+                  backgroundColor: particle.color, 
+                  width: particle.size * 1.5, 
+                  height: particle.size * 0.6
+                }
+              ]} />
+            )}
+          </Animated.View>
+        ))}
+      </View>
+
+      {/* Intelligent Ad Overlay System */}
+      <View style={styles.adOverlay} pointerEvents="box-none">
+        {activeAds.map(vehicle => (
+          <Animated.View
+            key={vehicle.id}
+            style={[
+              styles.adVehicle,
+              {
+                top: vehicle.laneHeight,
+                transform: [{ translateX: vehicle.animatedValue }]
+              }
+            ]}
+          >
+            <View style={styles.vehicleContainer}>
+              <View style={styles.vehicleWrapper}>
+                {/* Vehicle with effects */}
+                <View style={styles.vehicleWithEffects}>
+                  {/* Animated Throttle flames for spaceship */}
+                  {vehicle.hasThrottle && (
+                    <Animated.View 
+                      style={[
+                        vehicle.isFlipped ? styles.throttleContainerFlipped : styles.throttleContainer,
+                        { opacity: vehicle.throttleFlicker }
+                      ]}
+                    >
+                      <View style={styles.flameParticle1} />
+                      <View style={styles.flameParticle2} />
+                      <View style={styles.flameParticle3} />
+                    </Animated.View>
+                  )}
+                  
+                  {/* Animated Smoke trail for plane */}
+                  {vehicle.hasSmoke && (
+                    <Animated.View 
+                      style={[
+                        vehicle.isFlipped ? styles.smokeContainerFlipped : styles.smokeContainer,
+                        { opacity: vehicle.smokeOpacity }
+                      ]}
+                    >
+                      <View style={styles.smokePuff1} />
+                      <View style={styles.smokePuff2} />
+                      <View style={styles.smokePuff3} />
+                    </Animated.View>
+                  )}
+                  
+                  {/* Vehicle - Image with direction flip */}
+                  {vehicle.image ? (
+                    <Image 
+                      source={vehicle.image} 
+                      style={[
+                        styles.vehicleImage,
+                        vehicle.isFlipped && { transform: [{ scaleX: -1 }] }
+                      ]}
+                      resizeMode="contain"
+                    />
+                  ) : (
+                    <Text style={[
+                      styles.vehicleEmoji,
+                      vehicle.isFlipped && { transform: [{ scaleX: -1 }] }
+                    ]}>
+                      {vehicle.emoji}
+                    </Text>
+                  )}
+                  
+                  {/* Animated Rotor blur effect for helicopters/drones */}
+                  {vehicle.hasRotor && (
+                    <Animated.View 
+                      style={[
+                        styles.rotorEffect,
+                        {
+                          transform: [{
+                            rotate: vehicle.rotorSpin.interpolate({
+                              inputRange: [0, 1],
+                              outputRange: ['0deg', '360deg']
+                            })
+                          }]
+                        }
+                      ]}
+                    >
+                      <View style={styles.rotorBlade1} />
+                      <View style={styles.rotorBlade2} />
+                    </Animated.View>
+                  )}
+                </View>
+                
+                {/* Clickable Ad banner hanging below vehicle */}
+                <TouchableOpacity 
+                  style={[styles.adBanner, { backgroundColor: vehicle.color }]}
+                  onPress={(event) => handleAdClick(vehicle.url, event)}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.adBannerText}>{vehicle.banner}</Text>
+                  <Text style={styles.tapHint}>👆 Tap</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </Animated.View>
+        ))}
+      </View>
       </SafeAreaView>
     </GestureHandlerRootView>
   );
@@ -1549,6 +2035,23 @@ const styles = StyleSheet.create({
     color: '#333',
     fontWeight: 'bold',
   },
+  swipeCounter: {
+    marginBottom: 15,
+    alignItems: 'center',
+  },
+  swipeCountText: {
+    fontSize: 16,
+    color: '#007AFF',
+    fontWeight: '600',
+  },
+  swipeCountWarning: {
+    color: '#ff6b35',
+  },
+  premiumText: {
+    fontSize: 16,
+    color: '#44bb44',
+    fontWeight: '600',
+  },
   swipeInstructions: {
     marginTop: 10,
     paddingHorizontal: 20,
@@ -1598,8 +2101,22 @@ const styles = StyleSheet.create({
   paywallSubtitle: {
     fontSize: 16,
     color: '#666',
-    marginBottom: 40,
+    marginBottom: 20,
     textAlign: 'center',
+  },
+  limitReachedBanner: {
+    backgroundColor: '#ffe6e6',
+    borderRadius: 12,
+    padding: 15,
+    marginBottom: 30,
+    borderWidth: 1,
+    borderColor: '#ffcccc',
+  },
+  limitReachedText: {
+    fontSize: 16,
+    color: '#cc0000',
+    textAlign: 'center',
+    fontWeight: '600',
   },
   featuresContainer: {
     width: '100%',
@@ -1682,6 +2199,22 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
   },
+  headerButtons: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  resetButton: {
+    backgroundColor: '#ff4444',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 15,
+  },
+  resetText: {
+    color: 'white',
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
   settingsButton: {
     width: 40,
     height: 40,
@@ -1762,5 +2295,269 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: 'white',
     fontWeight: 'bold',
+  },
+  // Paywall blocked screen
+  paywallBlocked: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 40,
+    backgroundColor: '#f8f9fa',
+  },
+  paywallBlockedTitle: {
+    fontSize: 28,
+    fontWeight: 'bold',
+    color: '#333',
+    marginBottom: 20,
+    textAlign: 'center',
+  },
+  paywallBlockedText: {
+    fontSize: 16,
+    color: '#666',
+    textAlign: 'center',
+    lineHeight: 24,
+    marginBottom: 40,
+  },
+  unlockButton: {
+    backgroundColor: '#007AFF',
+    paddingHorizontal: 30,
+    paddingVertical: 15,
+    borderRadius: 25,
+    minWidth: 200,
+    alignItems: 'center',
+  },
+  unlockButtonText: {
+    color: 'white',
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  // Confetti Effects
+  confettiContainer: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 2000,
+  },
+  confettiParticle: {
+    position: 'absolute',
+    zIndex: 2001,
+  },
+  confettiSquare: {
+    shadowColor: '#000',
+    shadowOffset: { width: 1, height: 1 },
+    shadowOpacity: 0.3,
+    shadowRadius: 2,
+    elevation: 3,
+  },
+  confettiCircle: {
+    shadowColor: '#000',
+    shadowOffset: { width: 1, height: 1 },
+    shadowOpacity: 0.3,
+    shadowRadius: 2,
+    elevation: 3,
+  },
+  confettiTriangle: {
+    width: 0,
+    height: 0,
+    borderStyle: 'solid',
+    borderLeftColor: 'transparent',
+    borderRightColor: 'transparent',
+    shadowColor: '#000',
+    shadowOffset: { width: 1, height: 1 },
+    shadowOpacity: 0.3,
+    shadowRadius: 2,
+    elevation: 3,
+  },
+  confettiRectangle: {
+    borderRadius: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 1, height: 1 },
+    shadowOpacity: 0.3,
+    shadowRadius: 2,
+    elevation: 3,
+  },
+  // Intelligent Ad Overlay System
+  adOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 1000,
+    pointerEvents: 'none',
+  },
+  adVehicle: {
+    position: 'absolute',
+    alignItems: 'center',
+    zIndex: 1001,
+  },
+  vehicleContainer: {
+    alignItems: 'center',
+  },
+  vehicleWrapper: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  vehicleWithEffects: {
+    position: 'relative',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 8,
+  },
+  vehicleImage: {
+    width: 60,
+    height: 60,
+    zIndex: 2,
+  },
+  vehicleEmoji: {
+    fontSize: 48,
+    marginBottom: 8,
+    textShadowColor: 'rgba(0,0,0,0.4)',
+    textShadowOffset: { width: 2, height: 2 },
+    textShadowRadius: 4,
+    zIndex: 2,
+  },
+  // Real Throttle flame effects for spaceship
+  throttleContainer: {
+    position: 'absolute',
+    left: -30,
+    flexDirection: 'row',
+    alignItems: 'center',
+    zIndex: 1,
+  },
+  throttleContainerFlipped: {
+    position: 'absolute',
+    right: -30, // Flames appear behind when going right-to-left
+    flexDirection: 'row-reverse', // Reverse flame order
+    alignItems: 'center',
+    zIndex: 1,
+  },
+  flameParticle1: {
+    width: 12,
+    height: 20,
+    backgroundColor: '#FF6B35',
+    borderRadius: 6,
+    marginLeft: 2,
+    shadowColor: '#FF6B35',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.8,
+    shadowRadius: 4,
+    elevation: 4,
+  },
+  flameParticle2: {
+    width: 8,
+    height: 15,
+    backgroundColor: '#FF4500',
+    borderRadius: 4,
+    marginLeft: -2,
+    shadowColor: '#FF4500',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.6,
+    shadowRadius: 3,
+    elevation: 3,
+  },
+  flameParticle3: {
+    width: 6,
+    height: 10,
+    backgroundColor: '#FFD700',
+    borderRadius: 3,
+    marginLeft: -1,
+    shadowColor: '#FFD700',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.4,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  // Real Smoke effects for plane
+  smokeContainer: {
+    position: 'absolute',
+    left: -45,
+    flexDirection: 'row',
+    alignItems: 'center',
+    zIndex: 1,
+  },
+  smokeContainerFlipped: {
+    position: 'absolute',
+    right: -45, // Smoke appears behind when going right-to-left
+    flexDirection: 'row-reverse', // Reverse smoke puff order
+    alignItems: 'center',
+    zIndex: 1,
+  },
+  smokePuff1: {
+    width: 20,
+    height: 15,
+    backgroundColor: 'rgba(150,150,150,0.7)',
+    borderRadius: 10,
+    marginLeft: 3,
+  },
+  smokePuff2: {
+    width: 16,
+    height: 12,
+    backgroundColor: 'rgba(180,180,180,0.5)',
+    borderRadius: 8,
+    marginLeft: -3,
+  },
+  smokePuff3: {
+    width: 12,
+    height: 9,
+    backgroundColor: 'rgba(200,200,200,0.3)',
+    borderRadius: 6,
+    marginLeft: -2,
+  },
+  // Real Rotor effects for helicopters/drones
+  rotorEffect: {
+    position: 'absolute',
+    top: -15,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 3,
+    width: 60,
+    height: 60,
+  },
+  rotorBlade1: {
+    position: 'absolute',
+    width: 50,
+    height: 2,
+    backgroundColor: 'rgba(100,100,100,0.8)',
+    borderRadius: 1,
+  },
+  rotorBlade2: {
+    position: 'absolute',
+    width: 2,
+    height: 50,
+    backgroundColor: 'rgba(100,100,100,0.8)',
+    borderRadius: 1,
+  },
+  adBanner: {
+    paddingHorizontal: 20, // Bigger banner
+    paddingVertical: 10,
+    borderRadius: 20,
+    minWidth: 150, // Ensure banner is substantial
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 6,
+    elevation: 8,
+    borderWidth: 2,
+    borderColor: 'rgba(255,255,255,0.3)',
+  },
+  adBannerText: {
+    color: 'white',
+    fontSize: 16, // Bigger text
+    fontWeight: 'bold',
+    textAlign: 'center',
+    textShadowColor: 'rgba(0,0,0,0.7)',
+    textShadowOffset: { width: 1, height: 1 },
+    textShadowRadius: 2,
+    marginBottom: 4,
+  },
+  tapHint: {
+    color: 'rgba(255,255,255,0.9)',
+    fontSize: 12,
+    textAlign: 'center',
+    fontWeight: '600',
   },
 });
