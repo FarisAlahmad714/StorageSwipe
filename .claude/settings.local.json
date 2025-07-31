@@ -1,8 +1,12 @@
 {
   "permissions": {
     "allow": [
+<<<<<<< HEAD
       "Bash(find:*)",
       "Bash(ls:*)"
+=======
+      "WebFetch(domain:docs.expo.dev)"
+>>>>>>> 11f54ae28ab6075b9ad5fa92b3d87e26dacd0f28
     ],
     "deny": []
   }
