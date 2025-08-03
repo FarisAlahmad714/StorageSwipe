@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { StyleSheet, Text, View, TouchableOpacity, Image, SafeAreaView, StatusBar, ScrollView, Alert, Dimensions, ActivityIndicator, Modal, FlatList, Animated, Linking } from 'react-native';
 import * as MediaLibrary from 'expo-media-library';
 import { Video, ResizeMode } from 'expo-av';
+import * as FileSystem from 'expo-file-system';
 import { categorizePhotos, formatFileSize } from './utils/duplicateDetection';
 import { Image as ExpoImage } from 'expo-image';
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -659,32 +660,42 @@ export default function App() {
     
     try {
       if (photo.mediaType === 'video') {
-        // For videos, get the full asset info
-        const assetInfo = await MediaLibrary.getAssetInfoAsync(photo);
+        const assetId = photo.id || photo.uri;
+        const assetInfo = await MediaLibrary.getAssetInfoAsync(assetId);
         
-        // iOS 18 BUG FIX: In production builds, localUri has corrupted fragments
-        // Use different URIs for dev vs production
-        const isDev = __DEV__;
-        let videoUri;
+        let videoUri = assetInfo.localUri || assetInfo.uri;
         
-        if (isDev) {
-          // In development, localUri works fine
-          videoUri = assetInfo.localUri || assetInfo.uri;
-        } else {
-          // In production/TestFlight, MUST use uri (not localUri)
-          // This avoids the iOS 18 fragment corruption bug
-          videoUri = assetInfo.uri;
-        }
-        
-        // Clean any fragments just in case
-        if (videoUri.includes('#')) {
-          console.log('WARNING: Cleaning corrupted URI fragment');
+        // Clean any iOS 18 fragment corruption
+        if (videoUri && videoUri.includes('#')) {
           videoUri = videoUri.split('#')[0];
         }
         
-        console.log('Video URI:', { isDev, uri: videoUri });
+        // PRODUCTION FIX: Copy video to app's cache directory
+        if (!__DEV__ && videoUri && videoUri.startsWith('file://')) {
+          try {
+            const videoFileName = `video_${photo.id}_${Date.now()}.mp4`;
+            const cacheUri = `${FileSystem.cacheDirectory}${videoFileName}`;
+            
+            // Check if already cached
+            const cacheInfo = await FileSystem.getInfoAsync(cacheUri);
+            
+            if (!cacheInfo.exists) {
+              console.log('Copying video to cache for production playback...');
+              await FileSystem.copyAsync({
+                from: videoUri,
+                to: cacheUri
+              });
+            }
+            
+            videoUri = cacheUri; // Use cached version
+            console.log('Using cached video:', cacheUri);
+          } catch (error) {
+            console.error('Failed to cache video:', error);
+            // Continue with original URI
+          }
+        }
         
-        setCurrentPhotoUri(videoUri);
+        setCurrentPhotoUri(assetInfo.localUri || assetInfo.uri);
         setVideoSource(videoUri);
       } else {
         // For photos, get the full asset info for better quality
@@ -1335,6 +1346,9 @@ export default function App() {
                         }}
                         onLoad={() => {
                           console.log('Video loaded successfully:', videoSource);
+                        }}
+                        onReadyForDisplay={() => {
+                          console.log('Video ready for display');
                         }}
                         onPlaybackStatusUpdate={(status) => {
                           if (status.isLoaded) {
