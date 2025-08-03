@@ -659,14 +659,30 @@ export default function App() {
     
     try {
       if (photo.mediaType === 'video') {
-        // For videos, get the full asset info to get localUri
+        // For videos, get the full asset info
         const assetInfo = await MediaLibrary.getAssetInfoAsync(photo);
-        let videoUri = assetInfo.localUri || assetInfo.uri;
         
-        // Clean the URI by removing the fragment
+        // iOS 18 BUG FIX: In production builds, localUri has corrupted fragments
+        // Use different URIs for dev vs production
+        const isDev = __DEV__;
+        let videoUri;
+        
+        if (isDev) {
+          // In development, localUri works fine
+          videoUri = assetInfo.localUri || assetInfo.uri;
+        } else {
+          // In production/TestFlight, MUST use uri (not localUri)
+          // This avoids the iOS 18 fragment corruption bug
+          videoUri = assetInfo.uri;
+        }
+        
+        // Clean any fragments just in case
         if (videoUri.includes('#')) {
+          console.log('WARNING: Cleaning corrupted URI fragment');
           videoUri = videoUri.split('#')[0];
         }
+        
+        console.log('Video URI:', { isDev, uri: videoUri });
         
         setCurrentPhotoUri(videoUri);
         setVideoSource(videoUri);
