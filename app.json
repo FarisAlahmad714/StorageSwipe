@@ -1,12 +1,13 @@
 {
   "expo": {
-    "name": "StorageSwipeApp",
+    "name": "StorageSwipe",
     "slug": "StorageSwipeApp",
+    "scheme": "storageswipe",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
-    "newArchEnabled": true,
+    "newArchEnabled": false,
     "splash": {
       "image": "./assets/splash.png",
       "resizeMode": "contain",
@@ -15,9 +16,10 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.fwayne714.storageswipe",
+      "buildNumber": "4",
       "infoPlist": {
         "NSPhotoLibraryUsageDescription": "StorageSwipe needs access to your photos to help you clean up your gallery.",
-        "NSPhotoLibraryAddUsageDescription": "StorageSwipe needs permission to save photos.",
+        "NSPhotoLibraryAddUsageDescription": "StorageSwipe needs permission to save photos and create albums.",
         "ITSAppUsesNonExemptEncryption": false
       }
     },
@@ -26,7 +28,8 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "edgeToEdgeEnabled": true
+      "edgeToEdgeEnabled": true,
+      "package": "com.fwayne714.storageswipe"
     },
     "web": {
       "favicon": "./assets/favicon.png"

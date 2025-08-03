@@ -1,0 +1,5 @@
+{
+  "ios": {
+    "deploymentTarget": "15.1"
+  }
+}

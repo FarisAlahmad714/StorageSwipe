@@ -6,7 +6,13 @@ import { categorizePhotos, formatFileSize } from './utils/duplicateDetection';
 import { Image as ExpoImage } from 'expo-image';
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 import Svg, { Circle } from 'react-native-svg';
-// Mock in-app purchases for development - replace with real implementation for production
+import { LinearGradient } from 'expo-linear-gradient';
+import FolderNode from './components/FolderNode';
+import { AlbumManager, DEFAULT_FOLDERS } from './utils/albumManager';
+import { TextInput } from 'react-native';
+import OnboardingGuide from './components/OnboardingGuide';
+// For now, use mock purchases until RevenueCat is configured
+// import PurchaseManager from './utils/purchaseManager';
 const InAppPurchases = {
   connectAsync: () => Promise.resolve(),
   purchaseItemAsync: (productId) => Promise.resolve({ 
@@ -16,7 +22,7 @@ const InAppPurchases = {
 };
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 // Language translations
 const translations = {
@@ -28,8 +34,15 @@ const translations = {
     delete: 'Delete',
     keep: 'Keep',
     photosRemaining: 'photos remaining',
-    swipeInstructions: '💡 Swipe left to delete • Swipe right to keep',
+    swipeInstructions: '💡 Swipe left to delete • Swipe right to keep • Drag to folders to organize',
     confirmDelete: 'Confirm Delete',
+    dragToOrganize: 'Drag to folders to organize',
+    createNewFolder: 'Create New Folder',
+    folderName: 'Folder Name',
+    cancel: 'Cancel',
+    create: 'Create',
+    addedToFolder: 'Added to',
+    folderCreated: 'Folder created',
     screenshots: 'Screenshots',
     whatsapp: 'WhatsApp',
     camera: 'Camera',
@@ -59,6 +72,10 @@ const translations = {
     settings: 'Settings',
     language: 'Language',
     selectLanguage: 'Select Language',
+    restoreFolders: 'Restore Hidden Folders',
+    foldersRestored: 'All folders restored',
+    viewGuide: 'View Tutorial',
+    aboutApp: 'About',
     // Free limits
     swipesRemaining: 'swipes remaining',
     unlimitedSwipes: 'Unlimited swipes'
@@ -71,8 +88,15 @@ const translations = {
     delete: 'Eliminar',
     keep: 'Mantener',
     photosRemaining: 'fotos restantes',
-    swipeInstructions: '💡 Desliza izquierda para eliminar • Desliza derecha para mantener',
+    swipeInstructions: '💡 Desliza izquierda para eliminar • Desliza derecha para mantener • Arrastra a carpetas para organizar',
     confirmDelete: 'Confirmar Eliminación',
+    dragToOrganize: 'Arrastra a carpetas para organizar',
+    createNewFolder: 'Crear Nueva Carpeta',
+    folderName: 'Nombre de Carpeta',
+    cancel: 'Cancelar',
+    create: 'Crear',
+    addedToFolder: 'Agregado a',
+    folderCreated: 'Carpeta creada',
     screenshots: 'Capturas',
     whatsapp: 'WhatsApp',
     camera: 'Cámara', 
@@ -102,6 +126,8 @@ const translations = {
     settings: 'Configuración',
     language: 'Idioma',
     selectLanguage: 'Seleccionar Idioma',
+    restoreFolders: 'Restaurar Carpetas Ocultas',
+    foldersRestored: 'Todas las carpetas restauradas',
     // Free limits
     swipesRemaining: 'deslizamientos restantes',
     unlimitedSwipes: 'Deslizamientos ilimitados'
@@ -231,18 +257,64 @@ export default function App() {
   // Ad overlay system
   const [adVehicles, setAdVehicles] = useState([]);
   const [activeAds, setActiveAds] = useState([]);
+  const spawningVehicles = useRef(new Set());
   const MAX_CONCURRENT_ADS = 2; // Maximum vehicles on screen at once
   
   // Animation values for swipe gestures
   const translateX = useRef(new Animated.Value(0)).current;
   const rotate = useRef(new Animated.Value(0)).current;
+  const translateY = useRef(new Animated.Value(0)).current;
+  
+  // Folder system state
+  const [folders, setFolders] = useState([]);
+  const [isDragging, setIsDragging] = useState(false);
+  const [draggedPhotoPosition, setDraggedPhotoPosition] = useState(null);
+  const [nearestFolder, setNearestFolder] = useState(null);
+  const [folderPositions, setFolderPositions] = useState({});
+  const [showCreateFolder, setShowCreateFolder] = useState(false);
+  const [newFolderName, setNewFolderName] = useState('');
+  const [selectedFolderEmoji, setSelectedFolderEmoji] = useState('📁');
+  const [existingAlbums, setExistingAlbums] = useState([]);
+  const [showExistingAlbums, setShowExistingAlbums] = useState(true);
+  const [showOnboarding, setShowOnboarding] = useState(false);
+  const dropAnimationValue = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     checkPermissions();
     initializePurchases();
     loadLanguage();
     initializeAdSystem();
+    loadFolders(true); // Clear positions on initial load
+    checkOnboarding();
   }, []);
+  
+  // Check if user has seen onboarding
+  const checkOnboarding = async () => {
+    // TEMPORARY: Always show onboarding for testing
+    setShowOnboarding(true);
+    
+    // Original code - uncomment when done testing:
+    // const hasSeenOnboarding = await AsyncStorage.getItem('hasSeenOnboarding');
+    // if (!hasSeenOnboarding) {
+    //   setShowOnboarding(true);
+    // }
+  };
+  
+  // Load folders from storage
+  const loadFolders = async (clearPositions = false) => {
+    const albumFolders = await AlbumManager.getAllFolders();
+    
+    // Filter out hidden folders
+    const hiddenFolders = await AsyncStorage.getItem('hiddenFolders') || '[]';
+    const hidden = JSON.parse(hiddenFolders);
+    const visibleFolders = albumFolders.filter(f => !hidden.includes(f.id));
+    
+    // Only clear positions when explicitly requested
+    if (clearPositions) {
+      setFolderPositions({});
+    }
+    setFolders(visibleFolders);
+  };
 
   // Helper function to get translated text
   const t = (key) => translations[currentLanguage][key] || translations.en[key];
@@ -301,6 +373,9 @@ export default function App() {
 
   // Initialize ad system
   const initializeAdSystem = () => {
+    // Clear any existing spawning vehicles
+    spawningVehicles.current.clear();
+    
     // Start each vehicle's timer
     AD_VEHICLES.forEach(vehicle => {
       // Random initial delay to stagger appearances
@@ -312,9 +387,9 @@ export default function App() {
     });
   };
 
-  // Check if vehicle type already exists on screen
+  // Check if vehicle type already exists on screen or is being spawned
   const isDuplicateVehicle = (vehicleType) => {
-    return activeAds.some(ad => ad.type === vehicleType);
+    return activeAds.some(ad => ad.type === vehicleType) || spawningVehicles.current.has(vehicleType);
   };
 
   // Check if lane is clear before spawning
@@ -344,19 +419,17 @@ export default function App() {
       
       // Only spawn if conditions are met:
       // 1. Lane is clear
-      // 2. No duplicate vehicle type on screen
+      // 2. No duplicate vehicle type on screen or being spawned
       // 3. Under max concurrent limit
       if (isLaneClear(vehicle.lane, direction) && !isDuplicateVehicle(vehicle.type)) {
+        // Mark vehicle as spawning to prevent duplicates
+        spawningVehicles.current.add(vehicle.type);
         spawnVehicle(vehicle, direction);
-      } else {
-        // If conditions not met, try again in 8 seconds
+        
+        // Remove from spawning set after a delay
         setTimeout(() => {
-          if (isLaneClear(vehicle.lane, direction) && 
-              !isDuplicateVehicle(vehicle.type) && 
-              activeAds.length < MAX_CONCURRENT_ADS) {
-            spawnVehicle(vehicle, direction);
-          }
-        }, 8000);
+          spawningVehicles.current.delete(vehicle.type);
+        }, 1000);
       }
       
       // Schedule next appearance
@@ -819,8 +892,6 @@ export default function App() {
 
 
   const renderCategoriesView = () => {
-    if (!categoryData) return null;
-
     const categoryInfo = {
       screenshot: { emoji: '📱', label: 'Screenshots' },
       whatsapp: { emoji: '💬', label: 'WhatsApp' },
@@ -832,25 +903,60 @@ export default function App() {
 
     return (
       <>
-        <Text style={styles.sectionTitle}>Photos by Category</Text>
-        <View style={styles.categoryGrid}>
-          {Object.entries(categoryData).map(([category, items]) => (
-            items.length > 0 && (
-              <TouchableOpacity
-                key={category}
-                style={styles.categoryCard}
-                onPress={() => setCategoryMediaView({ category, items })}
-              >
-                <Text style={styles.categoryEmoji}>{categoryInfo[category].emoji}</Text>
-                <Text style={styles.categoryLabel}>{categoryInfo[category].label}</Text>
-                <Text style={styles.categoryCount}>{items.length} items</Text>
-                <Text style={styles.categorySize}>
-                  Tap to view
-                </Text>
-              </TouchableOpacity>
-            )
-          ))}
-        </View>
+        {/* User Albums */}
+        {folders.filter(f => !f.isNew && f.count > 0).length > 0 && (
+          <>
+            <Text style={styles.sectionTitle}>Your Albums</Text>
+            <View style={styles.categoryGrid}>
+              {folders.filter(f => !f.isNew && f.count > 0).map((folder) => (
+                <TouchableOpacity
+                  key={folder.id}
+                  style={styles.categoryCard}
+                  onPress={async () => {
+                    // Load photos from this album
+                    const album = await MediaLibrary.getAlbumAsync(folder.name);
+                    if (album) {
+                      const { assets } = await MediaLibrary.getAssetsAsync({
+                        album: album,
+                        first: 1000,
+                        mediaType: ['photo', 'video']
+                      });
+                      setCategoryMediaView({ category: folder.name, items: assets });
+                    }
+                  }}
+                >
+                  <Text style={styles.categoryEmoji}>{folder.icon}</Text>
+                  <Text style={styles.categoryLabel}>{folder.name}</Text>
+                  <Text style={styles.categoryCount}>{folder.count} items</Text>
+                  <Text style={styles.categorySize}>Tap to view</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </>
+        )}
+        
+        {/* Auto-detected Categories */}
+        {categoryData && (
+          <>
+            <Text style={styles.sectionTitle}>Auto-Detected Categories</Text>
+            <View style={styles.categoryGrid}>
+              {Object.entries(categoryData).map(([category, items]) => (
+                items.length > 0 && (
+                  <TouchableOpacity
+                    key={category}
+                    style={styles.categoryCard}
+                    onPress={() => setCategoryMediaView({ category, items })}
+                  >
+                    <Text style={styles.categoryEmoji}>{categoryInfo[category].emoji}</Text>
+                    <Text style={styles.categoryLabel}>{categoryInfo[category].label}</Text>
+                    <Text style={styles.categoryCount}>{items.length} items</Text>
+                    <Text style={styles.categorySize}>Tap to view</Text>
+                  </TouchableOpacity>
+                )
+              ))}
+            </View>
+          </>
+        )}
       </>
     );
   };
@@ -860,19 +966,184 @@ export default function App() {
   const resetAnimation = () => {
     Animated.parallel([
       Animated.spring(translateX, { toValue: 0, useNativeDriver: true }),
-      Animated.spring(rotate, { toValue: 0, useNativeDriver: true })
+      Animated.spring(rotate, { toValue: 0, useNativeDriver: true }),
+      Animated.spring(translateY, { toValue: 0, useNativeDriver: true })
     ]).start();
+  };
+  
+  // Handle folder drop
+  const handleFolderDrop = async (folder) => {
+    if (!folder || !photos[currentIndex]) return;
+    
+    if (folder.isNew) {
+      // Show create folder modal
+      setShowCreateFolder(true);
+      return;
+    }
+    
+    const photo = photos[currentIndex];
+    const result = await AlbumManager.addAssetToAlbum(photo, folder.name);
+    
+    if (result.success) {
+      // Animate successful drop
+      Animated.sequence([
+        Animated.parallel([
+          Animated.timing(dropAnimationValue, {
+            toValue: 1,
+            duration: 300,
+            useNativeDriver: true
+          }),
+          Animated.timing(translateX, {
+            toValue: 0,
+            duration: 300,
+            useNativeDriver: true
+          }),
+          Animated.timing(translateY, {
+            toValue: 0,
+            duration: 300,
+            useNativeDriver: true
+          })
+        ]),
+        Animated.timing(dropAnimationValue, {
+          toValue: 0,
+          duration: 200,
+          useNativeDriver: true
+        })
+      ]).start(() => {
+        Alert.alert('Success', `${t('addedToFolder')} ${folder.name}`);
+        handleKeep(); // Move to next photo
+      });
+      
+      // Update folder count without clearing positions
+      const updatedFolders = folders.map(f => {
+        if (f.id === folder.id) {
+          return { ...f, count: (f.count || 0) + 1 };
+        }
+        return f;
+      });
+      setFolders(updatedFolders);
+    } else {
+      Alert.alert('Error', 'Failed to add photo to album');
+    }
+  };
+  
+  // Create new folder
+  const createNewFolder = async () => {
+    if (!newFolderName.trim()) {
+      Alert.alert('Error', 'Please enter a folder name');
+      return;
+    }
+    
+    const result = await AlbumManager.createAlbum(newFolderName, selectedFolderEmoji);
+    
+    if (result.success) {
+      setShowCreateFolder(false);
+      setNewFolderName('');
+      Alert.alert('Success', t('folderCreated'));
+      loadFolders();
+      
+      // Add current photo to new folder
+      if (photos[currentIndex]) {
+        handleFolderDrop({ name: newFolderName });
+      }
+    } else {
+      Alert.alert('Error', result.error || 'Failed to create folder');
+    }
+  };
+  
+  // Calculate nearest folder during drag
+  const findNearestFolder = (touchX, touchY) => {
+    let nearest = null;
+    let minDistance = Infinity;
+    
+    Object.entries(folderPositions).forEach(([folderId, position]) => {
+      const folder = folders.find(f => f.id === folderId);
+      if (!folder) return;
+      
+      const centerX = position.x + position.width / 2;
+      const centerY = position.y + position.height / 2;
+      const distance = Math.sqrt(
+        Math.pow(touchX - centerX, 2) + 
+        Math.pow(touchY - centerY, 2)
+      );
+      
+      if (distance < 100 && distance < minDistance) {
+        minDistance = distance;
+        nearest = folder;
+      }
+    });
+    
+    return nearest;
+  };
+  
+  // Store folder node positions
+  const handleFolderLayout = (folderId, event) => {
+    // Capture the target immediately
+    const target = event.target;
+    
+    // Measure absolute position after layout
+    setTimeout(() => {
+      if (target && target.measureInWindow) {
+        target.measureInWindow((x, y, width, height) => {
+          setFolderPositions(prev => ({
+            ...prev,
+            [folderId]: { x, y, width, height }
+          }));
+        });
+      }
+    }, 50);
+  };
+  
+  // Handle folder deletion
+  const handleFolderDelete = async (folder) => {
+    if (folder.isCustom) {
+      // Delete custom folder
+      await AlbumManager.deleteCustomAlbum(folder.id);
+    } else {
+      // Hide default folder
+      const hiddenFolders = await AsyncStorage.getItem('hiddenFolders') || '[]';
+      const hidden = JSON.parse(hiddenFolders);
+      hidden.push(folder.id);
+      await AsyncStorage.setItem('hiddenFolders', JSON.stringify(hidden));
+    }
+    
+    // Reload folders and clear positions since layout changed
+    loadFolders(true);
   };
 
   // Handle swipe gestures with new Gesture API
   const panGesture = Gesture.Pan()
+    .onStart(() => {
+      setIsDragging(true);
+    })
     .onUpdate((event) => {
       translateX.setValue(event.translationX);
-      rotate.setValue(event.translationX * 0.1); // Rotate based on swipe distance
+      translateY.setValue(event.translationY);
+      rotate.setValue(event.translationX * 0.1);
+      
+      // Get actual touch position
+      const touchX = event.absoluteX;
+      const touchY = event.absoluteY;
+      
+      setDraggedPhotoPosition({ x: touchX, y: touchY });
+      
+      // Find nearest folder using stored positions
+      const nearest = findNearestFolder(touchX, touchY);
+      setNearestFolder(nearest);
     })
     .onEnd((event) => {
-      const { translationX: tx, velocityX } = event;
+      const { translationX: tx, translationY: ty, velocityX, velocityY } = event;
+      setIsDragging(false);
+      setDraggedPhotoPosition(null);
       
+      // Check if dropped on a folder
+      if (nearestFolder) {
+        handleFolderDrop(nearestFolder);
+        setNearestFolder(null);
+        return;
+      }
+      
+      // Original swipe logic
       // Swipe left (delete) - threshold for swipe detection
       if (tx < -100 || velocityX < -500) {
         Animated.spring(translateX, { 
@@ -891,6 +1162,7 @@ export default function App() {
       else {
         Animated.parallel([
           Animated.spring(translateX, { toValue: 0, useNativeDriver: true }),
+          Animated.spring(translateY, { toValue: 0, useNativeDriver: true }),
           Animated.spring(rotate, { toValue: 0, useNativeDriver: true })
         ]).start();
       }
@@ -900,14 +1172,17 @@ export default function App() {
   const animatedCardStyle = {
     transform: [
       { translateX: translateX },
+      { translateY: translateY },
       { 
         rotate: rotate.interpolate({
           inputRange: [-SCREEN_WIDTH, 0, SCREEN_WIDTH],
           outputRange: ['-30deg', '0deg', '30deg'],
           extrapolate: 'clamp'
         })
-      }
+      },
+      { scale: isDragging ? 0.95 : 1 } // Slightly scale down when dragging
     ],
+    opacity: isDragging ? 0.9 : 1, // Slightly transparent when dragging
   };
 
   const currentPhoto = photos[currentIndex];
@@ -915,12 +1190,22 @@ export default function App() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="dark-content" />
-      <View style={styles.header}>
+      <StatusBar barStyle="light-content" />
+      <LinearGradient
+        colors={['#000000', '#333333']}
+        style={styles.header}
+      >
         <View style={styles.headerContent}>
-          <View>
-            <Text style={styles.title}>{t('title')}</Text>
-            <Text style={styles.subtitle}>{t('subtitle')}</Text>
+          <View style={styles.headerLeft}>
+            <Image 
+              source={require('./assets/header.png')} 
+              style={styles.headerLogo}
+              resizeMode="contain"
+            />
+            <View>
+              <Text style={styles.title}>{t('title')}</Text>
+              <Text style={styles.subtitle}>{t('subtitle')}</Text>
+            </View>
           </View>
           <View style={styles.headerButtons}>
             {/* Reset button for testing - remove in production */}
@@ -944,7 +1229,7 @@ export default function App() {
             </TouchableOpacity>
           </View>
         </View>
-      </View>
+      </LinearGradient>
       
       <View style={styles.tabContainer}>
         <TouchableOpacity 
@@ -989,9 +1274,28 @@ export default function App() {
             </TouchableOpacity>
           </View>
         ) : viewMode === 'swipe' && currentIndex < photos.length ? (
-          <ScrollView contentContainerStyle={styles.content}>
+          <ScrollView style={styles.swipeContainer} contentContainerStyle={styles.swipeScrollContent}>
+            {/* Folder nodes frame - top only for simplicity */}
+            <View style={styles.folderFrame} pointerEvents="box-none">
+              <View style={styles.topFolderRow} key={folders.length}>
+                {folders.map((folder, index) => (
+                  <FolderNode
+                    key={`${folder.id}-${index}`}
+                    folder={folder}
+                    position={folderPositions[folder.id] || { x: 0, y: 0 }}
+                    isActive={nearestFolder?.id === folder.id}
+                    isDragging={isDragging}
+                    draggedPhotoPosition={draggedPhotoPosition}
+                    onLayout={(e) => handleFolderLayout(folder.id, e)}
+                    onLongPress={handleFolderDelete}
+                  />
+                ))}
+              </View>
+            </View>
+            
+            <View style={styles.swipeContent}>
             <GestureDetector gesture={panGesture}>
-              <Animated.View style={[styles.card, animatedCardStyle]}>
+              <Animated.View style={[styles.card, animatedCardStyle, isDragging && styles.draggingCard]}>
                 {currentPhotoUri ? (
                   currentPhoto.mediaType === 'video' ? (
                     <View style={styles.videoContainer}>
@@ -1036,11 +1340,12 @@ export default function App() {
             <View style={styles.swipeInstructions}>
               <Text style={styles.swipeText}>{t('swipeInstructions')}</Text>
             </View>
+            </View>
           </ScrollView>
         ) : viewMode === 'categories' ? (
-          <View style={styles.fullContainer}>
+          <ScrollView style={styles.fullContainer}>
             {renderCategoriesView()}
-          </View>
+          </ScrollView>
         ) : (
           <View style={styles.emptyContainer}>
             <Text style={styles.emptyText}>No more photos to review!</Text>
@@ -1262,8 +1567,135 @@ export default function App() {
                 </TouchableOpacity>
               ))}
             </View>
+            
+            <View style={styles.settingsSection}>
+              <TouchableOpacity
+                style={styles.restoreFoldersButton}
+                onPress={async () => {
+                  await AsyncStorage.removeItem('hiddenFolders');
+                  loadFolders();
+                  Alert.alert('Success', t('foldersRestored'));
+                }}
+              >
+                <Text style={styles.restoreFoldersText}>{t('restoreFolders')}</Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity
+                style={styles.viewGuideButton}
+                onPress={() => {
+                  setShowSettings(false);
+                  setShowOnboarding(true);
+                }}
+              >
+                <Text style={styles.viewGuideText}>{t('viewGuide')}</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </SafeAreaView>
+      </Modal>
+
+      {/* Create Folder Modal */}
+      <Modal
+        visible={showCreateFolder}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setShowCreateFolder(false)}
+      >
+        <View style={styles.modalContainer}>
+          <View style={styles.createFolderContent}>
+            <Text style={styles.modalTitle}>
+              {showExistingAlbums ? 'Choose Album' : t('createNewFolder')}
+            </Text>
+            
+            {showExistingAlbums ? (
+              <>
+                <ScrollView style={styles.existingAlbumsList}>
+                  {existingAlbums.length > 0 ? (
+                    existingAlbums.map((album) => (
+                      <TouchableOpacity
+                        key={album.id}
+                        style={styles.existingAlbumItem}
+                        onPress={() => {
+                          handleFolderDrop({ name: album.name });
+                          setShowCreateFolder(false);
+                        }}
+                      >
+                        <Text style={styles.existingAlbumName}>{album.name}</Text>
+                        <Text style={styles.existingAlbumCount}>{album.count} photos</Text>
+                      </TouchableOpacity>
+                    ))
+                  ) : (
+                    <Text style={styles.noAlbumsText}>No existing albums found</Text>
+                  )}
+                </ScrollView>
+                
+                <TouchableOpacity
+                  style={styles.createNewButton}
+                  onPress={() => setShowExistingAlbums(false)}
+                >
+                  <Text style={styles.createNewButtonText}>➕ Create New Album</Text>
+                </TouchableOpacity>
+                
+                <TouchableOpacity 
+                  style={[styles.modalButton, styles.modalCancelButton]}
+                  onPress={() => {
+                    setShowCreateFolder(false);
+                    setShowExistingAlbums(true);
+                  }}
+                >
+                  <Text style={[styles.modalButtonText, { color: '#333' }]}>{t('cancel')}</Text>
+                </TouchableOpacity>
+              </>
+            ) : (
+              <>
+                <TextInput
+                  style={styles.folderNameInput}
+                  placeholder={t('folderName')}
+                  value={newFolderName}
+                  onChangeText={setNewFolderName}
+                  autoFocus
+                  maxLength={20}
+                />
+                
+                <Text style={styles.emojiSelectLabel}>Choose an icon:</Text>
+                <View style={styles.emojiGrid}>
+                  {['📁', '📷', '🌟', '❤️', '🏝️', '🎨', '🎵', '💼', '🎉', '🎆', '🌴', '🚀'].map((emoji) => (
+                    <TouchableOpacity
+                      key={emoji}
+                      style={[
+                        styles.emojiOption,
+                        selectedFolderEmoji === emoji && styles.selectedEmoji
+                      ]}
+                      onPress={() => setSelectedFolderEmoji(emoji)}
+                    >
+                      <Text style={styles.emojiText}>{emoji}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+                
+                <View style={styles.modalButtons}>
+                  <TouchableOpacity 
+                    style={[styles.modalButton, styles.modalCancelButton]}
+                    onPress={() => {
+                      setShowCreateFolder(false);
+                      setNewFolderName('');
+                      setSelectedFolderEmoji('📁');
+                      setShowExistingAlbums(true);
+                    }}
+                  >
+                    <Text style={[styles.modalButtonText, { color: '#333' }]}>{t('cancel')}</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity 
+                    style={[styles.modalButton, styles.createButton]}
+                    onPress={createNewFolder}
+                  >
+                    <Text style={styles.modalButtonText}>{t('create')}</Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            )}
+          </View>
+        </View>
       </Modal>
 
       {/* Paywall Modal */}
@@ -1508,6 +1940,12 @@ export default function App() {
           </Animated.View>
         ))}
       </View>
+      
+      {/* Onboarding Guide */}
+      <OnboardingGuide 
+        visible={showOnboarding} 
+        onComplete={() => setShowOnboarding(false)} 
+      />
       </SafeAreaView>
     </GestureHandlerRootView>
   );
@@ -1521,18 +1959,17 @@ const styles = StyleSheet.create({
   header: {
     paddingHorizontal: 20,
     paddingVertical: 15,
-    backgroundColor: 'white',
     borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
+    borderBottomColor: '#222222',
   },
   title: {
     fontSize: 24,
     fontWeight: 'bold',
-    color: '#333',
+    color: '#FFFFFF',
   },
   subtitle: {
     fontSize: 14,
-    color: '#666',
+    color: '#CCCCCC',
     marginTop: 5,
   },
   content: {
@@ -1540,12 +1977,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 20,
   },
+  swipeContent: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingTop: 120, // Space for top folders
+    paddingBottom: 80, // Space for bottom buttons
+  },
   contentContainer: {
     flex: 1,
   },
   card: {
-    width: SCREEN_WIDTH * 0.9,
-    height: SCREEN_WIDTH * 1.3,
+    width: SCREEN_WIDTH * 0.85,
+    height: SCREEN_WIDTH * 1.2,
     borderRadius: 20,
     backgroundColor: 'white',
     shadowColor: '#000',
@@ -1557,7 +2001,12 @@ const styles = StyleSheet.create({
     shadowRadius: 3.84,
     elevation: 5,
     overflow: 'hidden',
-    marginBottom: 20,
+    marginVertical: 10,
+  },
+  draggingCard: {
+    shadowOpacity: 0.35,
+    shadowRadius: 6,
+    elevation: 8,
   },
   photo: {
     width: '100%',
@@ -1568,7 +2017,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-around',
     width: SCREEN_WIDTH * 0.9,
-    marginBottom: 20,
+    marginBottom: 30,
+    marginTop: 10,
   },
   button: {
     paddingHorizontal: 40,
@@ -2053,12 +2503,13 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   swipeInstructions: {
-    marginTop: 10,
+    marginTop: 5,
+    marginBottom: -10,
     paddingHorizontal: 20,
     alignItems: 'center',
   },
   swipeText: {
-    fontSize: 14,
+    fontSize: 12,
     color: '#888',
     textAlign: 'center',
     fontStyle: 'italic',
@@ -2199,6 +2650,16 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
   },
+  headerLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  headerLogo: {
+    width: 80,
+    height: 80,
+    marginRight: 15,
+    borderRadius: 15, // Rounded corners for polish
+  },
   headerButtons: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2216,15 +2677,17 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
   settingsButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    marginRight: -5, // Pull closer to edge
     backgroundColor: '#f0f0f0',
     justifyContent: 'center',
     alignItems: 'center',
   },
   settingsIcon: {
     fontSize: 18,
+    color: '#FFFFFF',
   },
   // Settings modal styles
   settingsContainer: {
@@ -2330,6 +2793,13 @@ const styles = StyleSheet.create({
     color: 'white',
     fontSize: 18,
     fontWeight: 'bold',
+  },
+  // Modal override for centered display
+  modalContainer: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   // Confetti Effects
   confettiContainer: {
@@ -2559,5 +3029,149 @@ const styles = StyleSheet.create({
     fontSize: 12,
     textAlign: 'center',
     fontWeight: '600',
+  },
+  // Folder system styles
+  swipeContainer: {
+    flex: 1,
+  },
+  swipeScrollContent: {
+    flexGrow: 1,
+    position: 'relative',
+    paddingBottom: 20,
+  },
+  folderFrame: {
+    position: 'absolute',
+    top: 10,
+    left: 0,
+    right: 0,
+    height: 100,
+    zIndex: 10,
+    paddingHorizontal: 10,
+  },
+  topFolderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-evenly',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    paddingTop: 10,
+  },
+  // Create folder modal styles
+  createFolderContent: {
+    backgroundColor: 'white',
+    borderRadius: 20,
+    padding: 25,
+    minHeight: 400,
+    width: '90%',
+    maxWidth: 350,
+    alignSelf: 'center',
+  },
+  folderNameInput: {
+    borderWidth: 2,
+    borderColor: '#e0e0e0',
+    borderRadius: 10,
+    padding: 15,
+    fontSize: 16,
+    marginVertical: 20,
+  },
+  emojiSelectLabel: {
+    fontSize: 16,
+    color: '#333',
+    fontWeight: '600',
+    marginBottom: 15,
+  },
+  emojiGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    marginBottom: 30,
+  },
+  emojiOption: {
+    width: 50,
+    height: 50,
+    margin: 5,
+    borderRadius: 10,
+    backgroundColor: '#f0f0f0',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: 'transparent',
+  },
+  selectedEmoji: {
+    backgroundColor: '#E6F3FF',
+    borderColor: '#007AFF',
+  },
+  emojiText: {
+    fontSize: 24,
+  },
+  createButton: {
+    backgroundColor: '#007AFF',
+  },
+  existingAlbumsList: {
+    maxHeight: 300,
+    marginVertical: 20,
+  },
+  existingAlbumItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 15,
+    paddingHorizontal: 20,
+    backgroundColor: '#f8f9fa',
+    borderRadius: 10,
+    marginBottom: 10,
+  },
+  existingAlbumName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
+  },
+  existingAlbumCount: {
+    fontSize: 14,
+    color: '#666',
+  },
+  noAlbumsText: {
+    textAlign: 'center',
+    color: '#999',
+    marginVertical: 40,
+    fontSize: 16,
+  },
+  createNewButton: {
+    backgroundColor: '#007AFF',
+    paddingVertical: 15,
+    paddingHorizontal: 25,
+    borderRadius: 10,
+    alignItems: 'center',
+    marginBottom: 15,
+  },
+  createNewButtonText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  restoreFoldersButton: {
+    backgroundColor: '#f8f9fa',
+    paddingVertical: 15,
+    paddingHorizontal: 20,
+    borderRadius: 10,
+    alignItems: 'center',
+    marginTop: 20,
+  },
+  restoreFoldersText: {
+    color: '#007AFF',
+    fontSize: 16,
+    fontWeight: '500',
+  },
+  viewGuideButton: {
+    backgroundColor: '#E6F3FF',
+    paddingVertical: 15,
+    paddingHorizontal: 20,
+    borderRadius: 10,
+    alignItems: 'center',
+    marginTop: 10,
+  },
+  viewGuideText: {
+    color: '#007AFF',
+    fontSize: 16,
+    fontWeight: '500',
   },
 });

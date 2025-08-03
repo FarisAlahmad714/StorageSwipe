@@ -1,39 +1,40 @@
 {
   "cli": {
     "version": ">= 3.0.0",
-    "appVersionSource": "local"
+    "appVersionSource": "local",
+    "promptToConfigurePushNotifications": false
   },
   "build": {
-    "development": {
-      "developmentClient": true,
-      "distribution": "internal",
-      "credentialsSource": "local",
-      "ios": {
-        "autoIncrement": false
-      }
-    },
-    "simulator": {
-      "developmentClient": true,
-      "distribution": "internal",
-      "ios": {
-        "simulator": true
-      }
-    },
-    "testflight": {
-      "developmentClient": true,
-      "distribution": "store"
-    },
-    "preview": {
+    "production": {
       "distribution": "store",
       "ios": {
+        "resourceClass": "m-medium",
         "buildConfiguration": "Release"
+      },
+      "env": {
+        "EAS_SKIP_AUTO_FINGERPRINT": "1",
+        "EXPO_NO_TELEMETRY": "1"
       }
     },
-    "production": {
-      "autoIncrement": true
+    "preview": {
+      "distribution": "internal",
+      "ios": {
+        "resourceClass": "m-medium",
+        "buildConfiguration": "Release"
+      },
+      "env": {
+        "EAS_SKIP_AUTO_FINGERPRINT": "1",
+        "EXPO_NO_TELEMETRY": "1"
+      }
     }
   },
   "submit": {
-    "production": {}
+    "production": {
+      "ios": {
+        "appleId": "farisalahmad01@hotmail.com",
+        "ascAppId": "6737514599",
+        "appleTeamId": "565C7GFRWJ"
+      }
+    }
   }
 }
