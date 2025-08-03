@@ -651,6 +651,12 @@ export default function App() {
   const loadPhotoUri = async (photo) => {
     if (!photo) return;
     
+    // Stop any playing video when loading new media
+    if (videoRef.current) {
+      videoRef.current.pauseAsync();
+    }
+    setIsPlaying(false);
+    
     try {
       if (photo.mediaType === 'video') {
         // For videos, get the full asset info to get localUri
@@ -1299,14 +1305,42 @@ export default function App() {
                 {currentPhotoUri ? (
                   currentPhoto.mediaType === 'video' ? (
                     <View style={styles.videoContainer}>
-                      <View style={[styles.photo, styles.videoPlaceholder]}>
-                        <Text style={styles.videoIcon}>🎥</Text>
-                      </View>
-                      <View style={styles.videoOverlay}>
-                        <Text style={styles.videoPlayIcon}>▶️</Text>
-                        <Text style={styles.videoMessage}>Video preview</Text>
-                        <Text style={styles.videoSubMessage}>{currentPhoto.duration ? `${Math.round(currentPhoto.duration)}s` : ''}</Text>
-                      </View>
+                      <Video
+                        ref={videoRef}
+                        source={{ uri: videoSource }}
+                        style={styles.photo}
+                        shouldPlay={isPlaying}
+                        isLooping={false}
+                        resizeMode={ResizeMode.CONTAIN}
+                        useNativeControls
+                        onError={(error) => {
+                          console.log('Video error:', error);
+                          // Don't show alert, just show placeholder
+                        }}
+                        onLoad={() => {
+                          console.log('Video loaded successfully:', videoSource);
+                        }}
+                        onPlaybackStatusUpdate={(status) => {
+                          if (status.isLoaded) {
+                            setIsPlaying(status.isPlaying);
+                          }
+                        }}
+                        posterSource={{ uri: currentPhotoUri }}
+                        usePoster
+                      />
+                      {!isPlaying && (
+                        <TouchableOpacity
+                          style={styles.playButtonOverlay}
+                          onPress={() => {
+                            if (videoRef.current) {
+                              videoRef.current.playAsync();
+                              setIsPlaying(true);
+                            }
+                          }}
+                        >
+                          <Text style={styles.playButton}>▶️</Text>
+                        </TouchableOpacity>
+                      )}
                     </View>
                   ) : (
                     <Image 
@@ -2166,6 +2200,23 @@ const styles = StyleSheet.create({
   videoIconSmall: {
     fontSize: 30,
     opacity: 0.5,
+  },
+  playButtonOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.3)',
+  },
+  playButton: {
+    fontSize: 80,
+    color: 'white',
+    textShadowColor: 'rgba(0, 0, 0, 0.75)',
+    textShadowOffset: { width: 0, height: 2 },
+    textShadowRadius: 10,
   },
   tabContainer: {
     flexDirection: 'row',
