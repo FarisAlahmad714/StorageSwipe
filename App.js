@@ -1323,6 +1323,14 @@ export default function App() {
                         onPlaybackStatusUpdate={(status) => {
                           if (status.isLoaded) {
                             setIsPlaying(status.isPlaying);
+                            // When video finishes, show play button again
+                            if (status.didJustFinish) {
+                              setIsPlaying(false);
+                              // Reset video position to beginning
+                              if (videoRef.current) {
+                                videoRef.current.setPositionAsync(0);
+                              }
+                            }
                           }
                         }}
                         posterSource={{ uri: currentPhotoUri }}
