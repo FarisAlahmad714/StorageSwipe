@@ -5,6 +5,21 @@
     "promptToConfigurePushNotifications": false
   },
   "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "ios": {
+        "resourceClass": "m-medium",
+        "simulator": false
+      },
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "EAS_SKIP_AUTO_FINGERPRINT": "1",
+        "EXPO_NO_TELEMETRY": "1"
+      }
+    },
     "production": {
       "distribution": "store",
       "ios": {

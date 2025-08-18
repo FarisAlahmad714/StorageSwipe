@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { StyleSheet, Text, View, TouchableOpacity, Image, SafeAreaView, StatusBar, ScrollView, Alert, Dimensions, ActivityIndicator, Modal, FlatList, Animated, Linking } from 'react-native';
 import * as MediaLibrary from 'expo-media-library';
-import { Video, ResizeMode } from 'expo-av';
+import { useVideoPlayer, VideoView } from 'expo-video';
+import { Video, ResizeMode } from 'expo-av'; // Keep for fallback
 import * as FileSystem from 'expo-file-system';
 import { categorizePhotos, formatFileSize } from './utils/duplicateDetection';
 import { Image as ExpoImage } from 'expo-image';
@@ -243,6 +244,31 @@ export default function App() {
   const [selectedDuplicateGroup, setSelectedDuplicateGroup] = useState(null);
   const [categoryMediaView, setCategoryMediaView] = useState(null);
   const videoRef = useRef(null);
+  
+  // Initialize video player with expo-video
+  const videoPlayer = useVideoPlayer(videoSource, (player) => {
+    if (videoSource) {
+      player.loop = false;
+      player.volume = 1.0;
+      player.muted = false;
+      // Auto-play videos when loaded
+      player.play();
+      setIsPlaying(true);
+    }
+  });
+  
+  // Monitor video player status
+  useEffect(() => {
+    if (videoPlayer) {
+      const subscription = videoPlayer.addListener('playingChange', (isPlaying) => {
+        setIsPlaying(isPlaying);
+      });
+      
+      return () => {
+        subscription.remove();
+      };
+    }
+  }, [videoPlayer]);
   
   // Paywall state
   const [isPremium, setIsPremium] = useState(false);
@@ -653,8 +679,8 @@ export default function App() {
     if (!photo) return;
     
     // Stop any playing video when loading new media
-    if (videoRef.current) {
-      videoRef.current.pauseAsync();
+    if (videoPlayer) {
+      videoPlayer.pause();
     }
     setIsPlaying(false);
     
@@ -663,6 +689,7 @@ export default function App() {
         const assetId = photo.id || photo.uri;
         const assetInfo = await MediaLibrary.getAssetInfoAsync(assetId);
         
+        // Prefer localUri for better compatibility across dev/prod builds
         let videoUri = assetInfo.localUri || assetInfo.uri;
         
         // Clean any iOS 18 fragment corruption
@@ -670,30 +697,19 @@ export default function App() {
           videoUri = videoUri.split('#')[0];
         }
         
-        // PRODUCTION FIX: Copy video to app's cache directory
-        if (!__DEV__ && videoUri && videoUri.startsWith('file://')) {
-          try {
-            const videoFileName = `video_${photo.id}_${Date.now()}.mp4`;
-            const cacheUri = `${FileSystem.cacheDirectory}${videoFileName}`;
-            
-            // Check if already cached
-            const cacheInfo = await FileSystem.getInfoAsync(cacheUri);
-            
-            if (!cacheInfo.exists) {
-              console.log('Copying video to cache for production playback...');
-              await FileSystem.copyAsync({
-                from: videoUri,
-                to: cacheUri
-              });
-            }
-            
-            videoUri = cacheUri; // Use cached version
-            console.log('Using cached video:', cacheUri);
-          } catch (error) {
-            console.error('Failed to cache video:', error);
-            // Continue with original URI
-          }
+        // Ensure the URI is properly formatted
+        if (videoUri && !videoUri.startsWith('file://') && !videoUri.startsWith('http')) {
+          videoUri = `file://${videoUri}`;
         }
+        
+        console.log('Video details:', {
+          id: photo.id,
+          originalUri: photo.uri,
+          assetUri: assetInfo.uri,
+          localUri: assetInfo.localUri,
+          finalUri: videoUri,
+          isDev: __DEV__
+        });
         
         setCurrentPhotoUri(assetInfo.localUri || assetInfo.uri);
         setVideoSource(videoUri);
@@ -854,8 +870,8 @@ export default function App() {
   const handleDelete = () => {
     if (currentIndex < photos.length) {
       // Stop video if playing
-      if (videoRef.current && photos[currentIndex].mediaType === 'video') {
-        videoRef.current.pauseAsync();
+      if (videoPlayer && photos[currentIndex].mediaType === 'video') {
+        videoPlayer.pause();
       }
       setDeletedPhotos([...deletedPhotos, photos[currentIndex]]);
       const nextIndex = currentIndex + 1;
@@ -873,8 +889,8 @@ export default function App() {
   const handleKeep = () => {
     if (currentIndex < photos.length) {
       // Stop video if playing
-      if (videoRef.current && photos[currentIndex].mediaType === 'video') {
-        videoRef.current.pauseAsync();
+      if (videoPlayer && photos[currentIndex].mediaType === 'video') {
+        videoPlayer.pause();
       }
       const nextIndex = currentIndex + 1;
       setCurrentIndex(nextIndex);
@@ -1332,46 +1348,27 @@ export default function App() {
                 {currentPhotoUri ? (
                   currentPhoto.mediaType === 'video' ? (
                     <View style={styles.videoContainer}>
-                      <Video
-                        ref={videoRef}
-                        source={{ uri: videoSource }}
-                        style={styles.photo}
-                        shouldPlay={isPlaying}
-                        isLooping={false}
-                        resizeMode={ResizeMode.CONTAIN}
-                        useNativeControls
-                        onError={(error) => {
-                          console.log('Video error:', error);
-                          // Don't show alert, just show placeholder
-                        }}
-                        onLoad={() => {
-                          console.log('Video loaded successfully:', videoSource);
-                        }}
-                        onReadyForDisplay={() => {
-                          console.log('Video ready for display');
-                        }}
-                        onPlaybackStatusUpdate={(status) => {
-                          if (status.isLoaded) {
-                            setIsPlaying(status.isPlaying);
-                            // When video finishes, show play button again
-                            if (status.didJustFinish) {
-                              setIsPlaying(false);
-                              // Reset video position to beginning
-                              if (videoRef.current) {
-                                videoRef.current.setPositionAsync(0);
-                              }
-                            }
-                          }
-                        }}
-                        posterSource={{ uri: currentPhotoUri }}
-                        usePoster
-                      />
-                      {!isPlaying && (
+                      {videoSource ? (
+                        <VideoView
+                          style={styles.photo}
+                          player={videoPlayer}
+                          allowsFullscreen
+                          allowsPictureInPicture
+                          nativeControls
+                          onEnterFullscreen={() => console.log('Entered fullscreen')}
+                          onExitFullscreen={() => console.log('Exited fullscreen')}
+                        />
+                      ) : (
+                        <View style={styles.photo}>
+                          <ActivityIndicator size="large" color="#999" />
+                        </View>
+                      )}
+                      {!isPlaying && videoSource && (
                         <TouchableOpacity
                           style={styles.playButtonOverlay}
                           onPress={() => {
-                            if (videoRef.current) {
-                              videoRef.current.playAsync();
+                            if (videoPlayer) {
+                              videoPlayer.play();
                               setIsPlaying(true);
                             }
                           }}
