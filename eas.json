@@ -14,10 +14,6 @@
       },
       "android": {
         "buildType": "apk"
-      },
-      "env": {
-        "EAS_SKIP_AUTO_FINGERPRINT": "1",
-        "EXPO_NO_TELEMETRY": "1"
       }
     },
     "production": {
