@@ -15,6 +15,14 @@
           "supportsBackgroundPlayback": true,
           "supportsPictureInPicture": true
         }
+      ],
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "StorageSwipe needs access to your photos to help you clean up your gallery.",
+          "savePhotosPermission": "StorageSwipe needs permission to save photos and create albums.",
+          "isAccessMediaLocationEnabled": true
+        }
       ]
     ],
     "splash": {

@@ -2,7 +2,6 @@ import React, { useState, useEffect, useRef } from 'react';
 import { StyleSheet, Text, View, TouchableOpacity, Image, SafeAreaView, StatusBar, ScrollView, Alert, Dimensions, ActivityIndicator, Modal, FlatList, Animated, Linking } from 'react-native';
 import * as MediaLibrary from 'expo-media-library';
 import { useVideoPlayer, VideoView } from 'expo-video';
-import { Video, ResizeMode } from 'expo-av'; // Keep for fallback
 import * as FileSystem from 'expo-file-system';
 import { categorizePhotos, formatFileSize } from './utils/duplicateDetection';
 import { Image as ExpoImage } from 'expo-image';
@@ -25,6 +24,45 @@ const InAppPurchases = {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+
+// Separate VideoPlayer component that only initializes when source is valid
+const VideoPlayer = ({ source, style }) => {
+  const [isPlaying, setIsPlaying] = useState(false);
+  
+  // Only initialize video player when we have a valid source
+  const videoPlayer = useVideoPlayer(source, (player) => {
+    console.log("VideoPlayer component - source is:", source);
+    if (player && source) {
+      player.loop = false;
+      player.volume = 1.0;
+      player.muted = false;
+      // Auto-play videos when loaded
+      player.play();
+      setIsPlaying(true);
+    }
+  });
+
+  useEffect(() => {
+    if (videoPlayer) {
+      const subscription = videoPlayer.addListener('playingChange', (playing) => {
+        setIsPlaying(playing);
+      });
+      return () => subscription.remove();
+    }
+  }, [videoPlayer]);
+
+  return (
+    <VideoView
+      style={style}
+      player={videoPlayer}
+      allowsFullscreen
+      allowsPictureInPicture
+      nativeControls
+      onEnterFullscreen={() => console.log('Entered fullscreen')}
+      onExitFullscreen={() => console.log('Exited fullscreen')}
+    />
+  );
+};
 
 // Language translations
 const translations = {
@@ -244,31 +282,6 @@ export default function App() {
   const [selectedDuplicateGroup, setSelectedDuplicateGroup] = useState(null);
   const [categoryMediaView, setCategoryMediaView] = useState(null);
   const videoRef = useRef(null);
-  
-  // Initialize video player with expo-video
-  const videoPlayer = useVideoPlayer(videoSource, (player) => {
-    if (videoSource) {
-      player.loop = false;
-      player.volume = 1.0;
-      player.muted = false;
-      // Auto-play videos when loaded
-      player.play();
-      setIsPlaying(true);
-    }
-  });
-  
-  // Monitor video player status
-  useEffect(() => {
-    if (videoPlayer) {
-      const subscription = videoPlayer.addListener('playingChange', (isPlaying) => {
-        setIsPlaying(isPlaying);
-      });
-      
-      return () => {
-        subscription.remove();
-      };
-    }
-  }, [videoPlayer]);
   
   // Paywall state
   const [isPremium, setIsPremium] = useState(false);
@@ -678,10 +691,7 @@ export default function App() {
   const loadPhotoUri = async (photo) => {
     if (!photo) return;
     
-    // Stop any playing video when loading new media
-    if (videoPlayer) {
-      videoPlayer.pause();
-    }
+    // Reset playing state when loading new media
     setIsPlaying(false);
     
     try {
@@ -869,10 +879,7 @@ export default function App() {
 
   const handleDelete = () => {
     if (currentIndex < photos.length) {
-      // Stop video if playing
-      if (videoPlayer && photos[currentIndex].mediaType === 'video') {
-        videoPlayer.pause();
-      }
+      // Video will stop automatically when component unmounts
       setDeletedPhotos([...deletedPhotos, photos[currentIndex]]);
       const nextIndex = currentIndex + 1;
       setCurrentIndex(nextIndex);
@@ -888,10 +895,7 @@ export default function App() {
 
   const handleKeep = () => {
     if (currentIndex < photos.length) {
-      // Stop video if playing
-      if (videoPlayer && photos[currentIndex].mediaType === 'video') {
-        videoPlayer.pause();
-      }
+      // Video will stop automatically when component unmounts
       const nextIndex = currentIndex + 1;
       setCurrentIndex(nextIndex);
       
@@ -1349,14 +1353,9 @@ export default function App() {
                   currentPhoto.mediaType === 'video' ? (
                     <View style={styles.videoContainer}>
                       {videoSource ? (
-                        <VideoView
+                        <VideoPlayer 
+                          source={videoSource}
                           style={styles.photo}
-                          player={videoPlayer}
-                          allowsFullscreen
-                          allowsPictureInPicture
-                          nativeControls
-                          onEnterFullscreen={() => console.log('Entered fullscreen')}
-                          onExitFullscreen={() => console.log('Exited fullscreen')}
                         />
                       ) : (
                         <View style={styles.photo}>
@@ -1367,10 +1366,8 @@ export default function App() {
                         <TouchableOpacity
                           style={styles.playButtonOverlay}
                           onPress={() => {
-                            if (videoPlayer) {
-                              videoPlayer.play();
-                              setIsPlaying(true);
-                            }
+                            // Play button is now handled by native controls
+                            setIsPlaying(true);
                           }}
                         >
                           <Text style={styles.playButton}>▶️</Text>
