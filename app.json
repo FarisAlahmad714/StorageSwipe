@@ -3,6 +3,7 @@
     "name": "StorageSwipe",
     "slug": "StorageSwipeApp",
     "scheme": "storageswipe",
+    "owner": "fingolfin-714",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -46,14 +47,19 @@
         "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true,
-      "package": "com.fwayne714.storageswipe"
+      "package": "com.fwayne714.storageswipe",
+      "permissions": [
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.ACCESS_MEDIA_LOCATION"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
     },
     "extra": {
       "eas": {
-        "projectId": "6814cc88-168c-4cbf-ad21-7a560b47fcc9"
+        "projectId": "99b625cf-180d-4d23-aac3-398da765a1ca"
       }
     }
   }

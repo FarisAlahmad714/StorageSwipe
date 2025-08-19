@@ -12,15 +12,7 @@ import FolderNode from './components/FolderNode';
 import { AlbumManager, DEFAULT_FOLDERS } from './utils/albumManager';
 import { TextInput } from 'react-native';
 import OnboardingGuide from './components/OnboardingGuide';
-// For now, use mock purchases until RevenueCat is configured
-// import PurchaseManager from './utils/purchaseManager';
-const InAppPurchases = {
-  connectAsync: () => Promise.resolve(),
-  purchaseItemAsync: (productId) => Promise.resolve({ 
-    responseCode: 0 // Mock success
-  }),
-  IAPResponseCode: { OK: 0 }
-};
+import PurchaseManager, { PRODUCT_IDS, ENTITLEMENT_ID } from './utils/purchaseManager';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -99,7 +91,6 @@ const translations = {
     organizeCategories: 'Organize by Categories',
     bulkDelete: 'Bulk Delete by Category',
     unlimitedProcessing: 'Unlimited Photo Processing',
-    noAds: 'No Ads Forever',
     yearly: 'Yearly',
     monthly: 'Monthly',
     lifetime: 'Lifetime',
@@ -153,7 +144,6 @@ const translations = {
     organizeCategories: 'Organizar por Categorías',
     bulkDelete: 'Eliminación Masiva por Categoría',
     unlimitedProcessing: 'Procesamiento Ilimitado de Fotos',
-    noAds: 'Sin Anuncios Para Siempre',
     yearly: 'Anual',
     monthly: 'Mensual',
     lifetime: 'De por Vida',
@@ -198,7 +188,6 @@ const translations = {
     organizeCategories: 'Organiser par Catégories',
     bulkDelete: 'Suppression en Lot par Catégorie',  
     unlimitedProcessing: 'Traitement Illimité des Photos',
-    noAds: 'Pas de Publicités à Vie',
     yearly: 'Annuel',
     monthly: 'Mensuel',
     lifetime: 'À Vie',
@@ -241,7 +230,6 @@ const translations = {
     organizeCategories: 'تنظيم حسب التصنيفات',
     bulkDelete: 'الحذف المجمع حسب التصنيف',
     unlimitedProcessing: 'معالجة صور غير محدودة',
-    noAds: 'بلا إعلانات للأبد',
     yearly: 'سنوي',
     monthly: 'شهري',
     lifetime: 'مدى الحياة',
@@ -298,7 +286,6 @@ export default function App() {
   const [adVehicles, setAdVehicles] = useState([]);
   const [activeAds, setActiveAds] = useState([]);
   const spawningVehicles = useRef(new Set());
-  const MAX_CONCURRENT_ADS = 2; // Maximum vehicles on screen at once
   
   // Animation values for swipe gestures
   const translateX = useRef(new Animated.Value(0)).current;
@@ -364,67 +351,77 @@ export default function App() {
     {
       id: 'spaceship_1',
       type: 'spaceship',
-      image: require('./assets/spaceship.png'), // Your custom spaceship image
+      image: require('./assets/spaceship.png'),
       lane: 1,
       speed: 8000,
-      interval: 45000,
-      banner: 'Nike - Just Do It',
+      interval: 120000, // 2 minutes
+      banner: 'Your Ad Here',
       color: '#FF6B35',
-      url: 'https://www.nike.com',
-      hasThrottle: true // Enable throttle flames
+      url: 'https://example.com',
+      hasThrottle: true
     },
     {
       id: 'plane_1', 
       type: 'plane',
-      image: require('./assets/plane.png'), // Your custom plane image
+      image: require('./assets/plane.png'),
       lane: 2,
       speed: 9000,
-      interval: 60000,
-      banner: 'McDonald\'s - I\'m Lovin\' It',
+      interval: 150000, // 2.5 minutes
+      banner: 'Advertise Here',
       color: '#FFD700',
-      url: 'https://www.mcdonalds.com',
-      hasSmoke: true // Enable smoke trail
+      url: 'https://example.com',
+      hasSmoke: true
     },
     {
       id: 'drone_1',
       type: 'drone', 
-      image: require('./assets/drone.png'), // Your custom drone image
+      image: require('./assets/drone.png'),
       lane: 3,
       speed: 7500,
-      interval: 75000,
-      banner: 'Coca-Cola - Open Happiness',
-      color: '#FF0000',
-      url: 'https://www.coca-cola.com',
-      hasRotor: true // Enable rotor blur effect
+      interval: 180000, // 3 minutes
+      banner: 'Ad Space Available',
+      color: '#00C851',
+      url: 'https://example.com',
+      hasRotor: true
     },
     {
       id: 'helicopter_1',
       type: 'helicopter',
-      image: require('./assets/helicopter.png'), // Your custom helicopter image
+      image: require('./assets/helicopter.png'),
       lane: 4,
       speed: 10000,
-      interval: 90000,
-      banner: 'Apple - Think Different',
+      interval: 90000, // 1.5 minutes
+      banner: 'Demo Advertisement',
       color: '#007AFF',
-      url: 'https://www.apple.com',
-      hasRotor: true // Enable rotor blur effect
+      url: 'https://example.com',
+      hasRotor: true
     }
   ];
 
-  // Initialize ad system
+  // Initialize ad system - show one vehicle every 2 minutes
   const initializeAdSystem = () => {
     // Clear any existing spawning vehicles
     spawningVehicles.current.clear();
     
-    // Start each vehicle's timer
-    AD_VEHICLES.forEach(vehicle => {
-      // Random initial delay to stagger appearances
-      const initialDelay = Math.random() * 10000;
+    let currentVehicleIndex = 0;
+    
+    const showNextVehicle = () => {
+      // Only spawn if no vehicles are currently active
+      if (activeAds.length === 0) {
+        const vehicle = AD_VEHICLES[currentVehicleIndex];
+        const direction = Math.random() > 0.5 ? 'left-to-right' : 'right-to-left';
+        spawnVehicle(vehicle, direction);
+        
+        // Move to next vehicle for next time
+        currentVehicleIndex = (currentVehicleIndex + 1) % AD_VEHICLES.length;
+      }
       
-      setTimeout(() => {
-        startVehicleLoop(vehicle);
-      }, initialDelay);
-    });
+      // Schedule next vehicle in 2 minutes
+      setTimeout(showNextVehicle, 120000); // 2 minutes = 120,000ms
+    };
+    
+    // Start first vehicle after 30 seconds
+    setTimeout(showNextVehicle, 30000);
   };
 
   // Check if vehicle type already exists on screen or is being spawned
@@ -494,6 +491,7 @@ export default function App() {
     const throttleFlicker = new Animated.Value(1);
     const smokeOpacity = new Animated.Value(1);
     const rotorSpin = new Animated.Value(0);
+    const flipRotation = new Animated.Value(isLeftToRight ? 0 : 1); // 0 = normal, 1 = flipped
     
     const newVehicle = {
       ...vehicle,
@@ -503,8 +501,9 @@ export default function App() {
       throttleFlicker,
       smokeOpacity,
       rotorSpin,
+      flipRotation,
       direction,
-      isFlipped: !isLeftToRight // Flip image for right-to-left flight
+      isFlipped: !isLeftToRight // Initial flip state
     };
     
     setActiveAds(prev => [...prev, newVehicle]);
@@ -560,12 +559,27 @@ export default function App() {
       spinAnimation.start();
     }
     
-    // Animate across screen in the correct direction
-    Animated.timing(animatedValue, {
-      toValue: endX, // Exit off-screen (left or right depending on direction)
-      duration: vehicle.speed,
-      useNativeDriver: true
-    }).start(() => {
+    // Animate across screen and back with flip
+    Animated.sequence([
+      // First pass - across the screen
+      Animated.timing(animatedValue, {
+        toValue: endX, // Exit off-screen (left or right depending on direction)
+        duration: vehicle.speed,
+        useNativeDriver: true
+      }),
+      // Flip the vehicle for return journey
+      Animated.timing(flipRotation, {
+        toValue: isLeftToRight ? 1 : 0, // Flip to opposite direction
+        duration: 300, // Quick flip animation
+        useNativeDriver: true
+      }),
+      // Return pass - back across the screen
+      Animated.timing(animatedValue, {
+        toValue: startX, // Return to starting position
+        duration: vehicle.speed,
+        useNativeDriver: true
+      })
+    ]).start(() => {
       // Remove from active ads when animation completes
       setActiveAds(prev => prev.filter(ad => ad.id !== vehicleId));
     });
@@ -699,37 +713,34 @@ export default function App() {
         const assetId = photo.id || photo.uri;
         const assetInfo = await MediaLibrary.getAssetInfoAsync(assetId);
         
-        // Prefer localUri for better compatibility across dev/prod builds
+        // Get the appropriate URI
         let videoUri = assetInfo.localUri || assetInfo.uri;
         
-        // Clean any iOS 18 fragment corruption
+        // CRITICAL FIX: Clean iOS fragment identifier that causes video corruption
+        // iOS adds fragment identifiers like #YnBsaXN0... that break video playback
         if (videoUri && videoUri.includes('#')) {
           videoUri = videoUri.split('#')[0];
         }
         
-        // Ensure the URI is properly formatted
-        if (videoUri && !videoUri.startsWith('file://') && !videoUri.startsWith('http')) {
-          videoUri = `file://${videoUri}`;
-        }
+        console.log('Video loading - cleaned URI:', videoUri);
         
-        console.log('Video details:', {
-          id: photo.id,
-          originalUri: photo.uri,
-          assetUri: assetInfo.uri,
-          localUri: assetInfo.localUri,
-          finalUri: videoUri,
-          isDev: __DEV__
-        });
-        
-        setCurrentPhotoUri(assetInfo.localUri || assetInfo.uri);
+        setCurrentPhotoUri(videoUri);
         setVideoSource(videoUri);
       } else {
         // For photos, get the full asset info for better quality
         const assetInfo = await MediaLibrary.getAssetInfoAsync(photo);
-        setCurrentPhotoUri(assetInfo.localUri || assetInfo.uri);
+        let photoUri = assetInfo.localUri || assetInfo.uri;
+        
+        // Also clean photo URIs if needed
+        if (photoUri && photoUri.includes('#')) {
+          photoUri = photoUri.split('#')[0];
+        }
+        
+        setCurrentPhotoUri(photoUri);
         setVideoSource(null);
       }
     } catch (error) {
+      console.error('Error loading media:', error);
       // Fallback to basic uri
       setCurrentPhotoUri(photo.uri);
       if (photo.mediaType === 'video') {
@@ -756,11 +767,16 @@ export default function App() {
     }
   }, [currentIndex, photos]);
 
-  // Initialize in-app purchases
+  // Initialize RevenueCat
   const initializePurchases = async () => {
     try {
-      await InAppPurchases.connectAsync();
-      await checkPremiumStatus();
+      const success = await PurchaseManager.initialize();
+      if (success) {
+        console.log('RevenueCat initialized successfully');
+        await checkPremiumStatus();
+      } else {
+        console.log('RevenueCat initialization failed');
+      }
     } catch (error) {
       console.log('Purchase initialization error:', error);
     }
@@ -769,12 +785,22 @@ export default function App() {
   // Check if user has premium
   const checkPremiumStatus = async () => {
     try {
+      const status = await PurchaseManager.checkSubscriptionStatus();
+      setIsPremium(status.isSubscribed);
+      
+      // Also save to AsyncStorage for offline access
+      await AsyncStorage.setItem('isPremium', status.isSubscribed.toString());
+      
+      if (status.isSubscribed) {
+        console.log('User has active Pro subscription');
+      }
+    } catch (error) {
+      console.log('Error checking premium status:', error);
+      // Fallback to AsyncStorage if RevenueCat fails
       const premiumStatus = await AsyncStorage.getItem('isPremium');
       if (premiumStatus === 'true') {
         setIsPremium(true);
       }
-    } catch (error) {
-      console.log('Error checking premium status:', error);
     }
   };
 
@@ -808,16 +834,62 @@ export default function App() {
     
     setPurchaseLoading(true);
     try {
-      const result = await InAppPurchases.purchaseItemAsync(productId);
+      const result = await PurchaseManager.purchaseProduct(productId);
       
-      if (result.responseCode === InAppPurchases.IAPResponseCode.OK) {
+      if (result.success && result.isActive) {
         await AsyncStorage.setItem('isPremium', 'true');
         setIsPremium(true);
         setShowPaywall(false);
-        Alert.alert('Success!', 'Welcome to StorageSwipe Premium! 🎉\nEnjoy unlimited swipes and all premium features!');
+        Alert.alert('Success!', 'Welcome to StorageSwipe Pro! 🎉\nEnjoy unlimited swipes and all premium features!');
+      } else if (!result.success && !result.error?.includes('user cancelled')) {
+        // Mock success in development for testing UI flow
+        if (__DEV__ && result.error?.includes('not found in offerings')) {
+          Alert.alert(
+            'Mock Purchase Success! 🎉', 
+            'This is a mock purchase for testing. In production, this will be a real purchase.',
+            [
+              { text: 'Cancel', style: 'cancel' },
+              { 
+                text: 'Test Premium', 
+                onPress: async () => {
+                  await AsyncStorage.setItem('isPremium', 'true');
+                  setIsPremium(true);
+                  setShowPaywall(false);
+                }
+              }
+            ]
+          );
+        } else {
+          Alert.alert('Purchase Error', result.error || 'Something went wrong. Please try again.');
+        }
       }
     } catch (error) {
       Alert.alert('Purchase Error', 'Something went wrong. Please try again.');
+    } finally {
+      setPurchaseLoading(false);
+    }
+  };
+
+  // Handle restore purchases
+  const handleRestorePurchases = async () => {
+    if (purchaseLoading) return;
+    
+    setPurchaseLoading(true);
+    try {
+      const result = await PurchaseManager.restorePurchases();
+      
+      if (result.success && result.isActive) {
+        await AsyncStorage.setItem('isPremium', 'true');
+        setIsPremium(true);
+        setShowPaywall(false);
+        Alert.alert('Success!', 'Your purchases have been restored! 🎉');
+      } else if (result.success) {
+        Alert.alert('No Purchases Found', 'No previous purchases were found for this account.');
+      } else {
+        Alert.alert('Restore Error', result.error || 'Could not restore purchases. Please try again.');
+      }
+    } catch (error) {
+      Alert.alert('Restore Error', 'Something went wrong. Please try again.');
     } finally {
       setPurchaseLoading(false);
     }
@@ -1800,15 +1872,15 @@ export default function App() {
                 <Text style={styles.featureText}>Unlimited Swipes & Processing</Text>
               </View>
               <View style={styles.feature}>
-                <Text style={styles.featureIcon}>🚫</Text>
-                <Text style={styles.featureText}>No Ads Forever</Text>
+                <Text style={styles.featureIcon}>🌍</Text>
+                <Text style={styles.featureText}>Multi-lingual Support</Text>
               </View>
             </View>
             
             <View style={styles.pricingContainer}>
               <TouchableOpacity 
                 style={[styles.pricingOption, styles.recommendedOption]}
-                onPress={() => handlePurchase('storageswipe_yearly')}
+                onPress={() => handlePurchase(PRODUCT_IDS.ANNUAL)}
                 disabled={purchaseLoading}
               >
                 <View style={styles.recommendedBadge}>
@@ -1821,15 +1893,24 @@ export default function App() {
               
               <TouchableOpacity 
                 style={styles.pricingOption}
-                onPress={() => handlePurchase('storageswipe_monthly')}
+                onPress={() => handlePurchase(PRODUCT_IDS.MONTHLY)}
                 disabled={purchaseLoading}
               >
                 <Text style={styles.pricingTitle}>Monthly</Text>
                 <Text style={styles.pricingPrice}>$2.99/month</Text>
                 <Text style={styles.pricingSubtext}>Cancel anytime</Text>
               </TouchableOpacity>
+
               
             </View>
+            
+            <TouchableOpacity 
+              style={styles.restorePurchasesButton}
+              onPress={handleRestorePurchases}
+              disabled={purchaseLoading}
+            >
+              <Text style={styles.restorePurchasesText}>Restore Purchases</Text>
+            </TouchableOpacity>
             
             {purchaseLoading && (
               <ActivityIndicator size="large" color="#007AFF" style={styles.purchaseLoader} />
@@ -1952,23 +2033,37 @@ export default function App() {
                     </Animated.View>
                   )}
                   
-                  {/* Vehicle - Image with direction flip */}
+                  {/* Vehicle - Image with animated direction flip */}
                   {vehicle.image ? (
-                    <Image 
+                    <Animated.Image 
                       source={vehicle.image} 
                       style={[
                         styles.vehicleImage,
-                        vehicle.isFlipped && { transform: [{ scaleX: -1 }] }
+                        { 
+                          transform: [{ 
+                            scaleX: vehicle.flipRotation.interpolate({
+                              inputRange: [0, 1],
+                              outputRange: [1, -1]
+                            })
+                          }] 
+                        }
                       ]}
                       resizeMode="contain"
                     />
                   ) : (
-                    <Text style={[
+                    <Animated.Text style={[
                       styles.vehicleEmoji,
-                      vehicle.isFlipped && { transform: [{ scaleX: -1 }] }
+                      { 
+                        transform: [{ 
+                          scaleX: vehicle.flipRotation.interpolate({
+                            inputRange: [0, 1],
+                            outputRange: [1, -1]
+                          })
+                        }] 
+                      }
                     ]}>
                       {vehicle.emoji}
-                    </Text>
+                    </Animated.Text>
                   )}
                   
                   {/* Animated Rotor blur effect for helicopters/drones */}
@@ -2726,6 +2821,18 @@ const styles = StyleSheet.create({
     color: '#999',
     textAlign: 'center',
     lineHeight: 18,
+  },
+  restorePurchasesButton: {
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    alignItems: 'center',
+    marginTop: 15,
+    marginBottom: 10,
+  },
+  restorePurchasesText: {
+    color: '#007AFF',
+    fontSize: 16,
+    fontWeight: '500',
   },
   // Header styles
   headerContent: {
