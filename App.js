@@ -842,26 +842,7 @@ export default function App() {
         setShowPaywall(false);
         Alert.alert('Success!', 'Welcome to StorageSwipe Pro! 🎉\nEnjoy unlimited swipes and all premium features!');
       } else if (!result.success && !result.error?.includes('user cancelled')) {
-        // Mock success in development for testing UI flow
-        if (__DEV__ && result.error?.includes('not found in offerings')) {
-          Alert.alert(
-            'Mock Purchase Success! 🎉', 
-            'This is a mock purchase for testing. In production, this will be a real purchase.',
-            [
-              { text: 'Cancel', style: 'cancel' },
-              { 
-                text: 'Test Premium', 
-                onPress: async () => {
-                  await AsyncStorage.setItem('isPremium', 'true');
-                  setIsPremium(true);
-                  setShowPaywall(false);
-                }
-              }
-            ]
-          );
-        } else {
-          Alert.alert('Purchase Error', result.error || 'Something went wrong. Please try again.');
-        }
+        Alert.alert('Purchase Error', result.error || 'Something went wrong. Please try again.');
       }
     } catch (error) {
       Alert.alert('Purchase Error', 'Something went wrong. Please try again.');
