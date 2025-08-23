@@ -142,9 +142,13 @@ export class AlbumManager {
 
   static async deleteCustomAlbum(albumId) {
     try {
+      console.log('TEMP DEBUG: AlbumManager deleteCustomAlbum called with ID:', albumId);
       const customAlbums = await this.getCustomAlbums();
+      console.log('TEMP DEBUG: Current custom albums:', customAlbums);
       const filtered = customAlbums.filter(a => a.id !== albumId);
+      console.log('TEMP DEBUG: Filtered albums after deletion:', filtered);
       await this.saveCustomAlbums(filtered);
+      console.log('TEMP DEBUG: Custom album deleted successfully');
       return { success: true };
     } catch (error) {
       console.error('Error deleting custom album:', error);

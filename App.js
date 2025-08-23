@@ -272,7 +272,7 @@ export default function App() {
   const videoRef = useRef(null);
   
   // Paywall state
-  const [isPremium, setIsPremium] = useState(false);
+  const [isPremium, setIsPremium] = useState(true); // TEMP: Set to true for screenshots
   const [showPaywall, setShowPaywall] = useState(false);
   const [purchaseLoading, setPurchaseLoading] = useState(false);
   
@@ -302,13 +302,13 @@ export default function App() {
   const [newFolderName, setNewFolderName] = useState('');
   const [selectedFolderEmoji, setSelectedFolderEmoji] = useState('📁');
   const [existingAlbums, setExistingAlbums] = useState([]);
-  const [showExistingAlbums, setShowExistingAlbums] = useState(true);
+  const [showExistingAlbums, setShowExistingAlbums] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const dropAnimationValue = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     checkPermissions();
-    initializePurchases();
+    // initializePurchases(); // TEMP: Disabled for screenshots
     loadLanguage();
     initializeAdSystem();
     loadFolders(true); // Clear positions on initial load
@@ -329,6 +329,7 @@ export default function App() {
   
   // Load folders from storage
   const loadFolders = async (clearPositions = false) => {
+    console.log('TEMP DEBUG: loadFolders called, clearPositions:', clearPositions);
     const albumFolders = await AlbumManager.getAllFolders();
     
     // Filter out hidden folders
@@ -340,7 +341,14 @@ export default function App() {
     if (clearPositions) {
       setFolderPositions({});
     }
-    setFolders(visibleFolders);
+    
+    // Force state update using functional update to ensure re-render
+    setFolders(prevFolders => {
+      console.log('TEMP DEBUG: Updating folders state from', prevFolders.length, 'to', visibleFolders.length);
+      return [...visibleFolders];
+    });
+    
+    console.log('TEMP DEBUG: Loaded folders', visibleFolders.length, 'folders:', visibleFolders.map(f => f.name));
   };
 
   // Helper function to get translated text
@@ -785,22 +793,23 @@ export default function App() {
   // Check if user has premium
   const checkPremiumStatus = async () => {
     try {
-      const status = await PurchaseManager.checkSubscriptionStatus();
-      setIsPremium(status.isSubscribed);
+      // TEMP: Always set premium to true for screenshots
+      setIsPremium(true);
+      await AsyncStorage.setItem('isPremium', 'true');
+      console.log('TEMP: Premium set to true for screenshots');
       
-      // Also save to AsyncStorage for offline access
-      await AsyncStorage.setItem('isPremium', status.isSubscribed.toString());
-      
-      if (status.isSubscribed) {
-        console.log('User has active Pro subscription');
-      }
+      // Original code commented out:
+      // const status = await PurchaseManager.checkSubscriptionStatus();
+      // setIsPremium(status.isSubscribed);
+      // await AsyncStorage.setItem('isPremium', status.isSubscribed.toString());
+      // if (status.isSubscribed) {
+      //   console.log('User has active Pro subscription');
+      // }
     } catch (error) {
       console.log('Error checking premium status:', error);
-      // Fallback to AsyncStorage if RevenueCat fails
-      const premiumStatus = await AsyncStorage.getItem('isPremium');
-      if (premiumStatus === 'true') {
-        setIsPremium(true);
-      }
+      // TEMP: Always fallback to true for screenshots
+      setIsPremium(true);
+      await AsyncStorage.setItem('isPremium', 'true');
     }
   };
 
@@ -931,6 +940,7 @@ export default function App() {
   };
 
   const handleDelete = () => {
+    console.log('TEMP DEBUG: handleDelete called', { currentIndex, photosLength: photos.length });
     if (currentIndex < photos.length) {
       // Video will stop automatically when component unmounts
       setDeletedPhotos([...deletedPhotos, photos[currentIndex]]);
@@ -947,6 +957,7 @@ export default function App() {
   };
 
   const handleKeep = () => {
+    console.log('TEMP DEBUG: handleKeep called', { currentIndex, photosLength: photos.length });
     if (currentIndex < photos.length) {
       // Video will stop automatically when component unmounts
       const nextIndex = currentIndex + 1;
@@ -1079,11 +1090,13 @@ export default function App() {
   
   // Handle folder drop
   const handleFolderDrop = async (folder) => {
+    console.log('TEMP DEBUG: handleFolderDrop called', { folder, currentPhoto: photos[currentIndex] });
     if (!folder || !photos[currentIndex]) return;
     
     if (folder.isNew) {
-      // Show create folder modal
+      console.log('TEMP DEBUG: Detected drop on New folder, showing create modal');
       setShowCreateFolder(true);
+      setShowExistingAlbums(false); // Go straight to name/emoji input
       return;
     }
     
@@ -1140,17 +1153,28 @@ export default function App() {
       return;
     }
     
+    console.log('TEMP DEBUG: Creating folder:', newFolderName.trim());
     const result = await AlbumManager.createAlbum(newFolderName, selectedFolderEmoji);
+    console.log('TEMP DEBUG: Folder creation result:', result);
     
     if (result.success) {
+      const folderName = newFolderName.trim();
       setShowCreateFolder(false);
       setNewFolderName('');
       Alert.alert('Success', t('folderCreated'));
-      loadFolders();
+      
+      // Force refresh folders with a small delay to ensure storage operation completes
+      console.log('TEMP DEBUG: Refreshing folders after creation');
+      setTimeout(async () => {
+        await loadFolders(true); // Force clear positions and reload
+        console.log('TEMP DEBUG: Folders refreshed after creation');
+      }, 150);
       
       // Add current photo to new folder
       if (photos[currentIndex]) {
-        handleFolderDrop({ name: newFolderName });
+        setTimeout(() => {
+          handleFolderDrop({ name: folderName });
+        }, 250);
       }
     } else {
       Alert.alert('Error', result.error || 'Failed to create folder');
@@ -1202,24 +1226,42 @@ export default function App() {
   
   // Handle folder deletion
   const handleFolderDelete = async (folder) => {
-    if (folder.isCustom) {
-      // Delete custom folder
-      await AlbumManager.deleteCustomAlbum(folder.id);
-    } else {
-      // Hide default folder
+    console.log('TEMP DEBUG: handleFolderDelete called', { folder, isCustom: folder?.isCustom });
+    try {
+      // Always hide the folder from view (works for both custom and default folders)
+      console.log('TEMP DEBUG: Hiding folder from view', folder.id);
       const hiddenFolders = await AsyncStorage.getItem('hiddenFolders') || '[]';
       const hidden = JSON.parse(hiddenFolders);
-      hidden.push(folder.id);
-      await AsyncStorage.setItem('hiddenFolders', JSON.stringify(hidden));
+      
+      if (!hidden.includes(folder.id)) {
+        hidden.push(folder.id);
+        await AsyncStorage.setItem('hiddenFolders', JSON.stringify(hidden));
+        console.log('TEMP DEBUG: Folder hidden successfully, hidden folders:', hidden);
+      } else {
+        console.log('TEMP DEBUG: Folder was already hidden');
+      }
+      
+      // If it's truly a custom folder (not in DEFAULT_FOLDERS), also delete from storage
+      if (folder.isCustom) {
+        const result = await AlbumManager.deleteCustomAlbum(folder.id);
+        console.log('TEMP DEBUG: Also tried to delete from custom storage:', result);
+      }
+      
+      // Small delay to ensure operations complete, then reload
+      console.log('TEMP DEBUG: Waiting before reload...');
+      setTimeout(() => {
+        console.log('TEMP DEBUG: Now reloading folders after delete');
+        loadFolders(true);
+      }, 500);
+    } catch (error) {
+      console.log('TEMP DEBUG: Error in handleFolderDelete:', error);
     }
-    
-    // Reload folders and clear positions since layout changed
-    loadFolders(true);
   };
 
   // Handle swipe gestures with new Gesture API
   const panGesture = Gesture.Pan()
     .onStart(() => {
+      console.log('TEMP DEBUG: Gesture started');
       setIsDragging(true);
     })
     .onUpdate((event) => {
@@ -1239,26 +1281,30 @@ export default function App() {
     })
     .onEnd((event) => {
       const { translationX: tx, translationY: ty, velocityX, velocityY } = event;
+      console.log('TEMP DEBUG: Gesture ended', { tx, ty, velocityX, velocityY, nearestFolder });
       setIsDragging(false);
       setDraggedPhotoPosition(null);
       
       // Check if dropped on a folder
       if (nearestFolder) {
+        console.log('TEMP DEBUG: Dropping on folder', nearestFolder.name, 'isNew:', nearestFolder.isNew);
         handleFolderDrop(nearestFolder);
         setNearestFolder(null);
         return;
       }
       
       // Original swipe logic
-      // Swipe left (delete) - threshold for swipe detection
-      if (tx < -100 || velocityX < -500) {
+      // Swipe left (delete) - threshold for swipe detection  
+      if (tx < -50 || velocityX < -200) { // TEMP: Lowered thresholds for easier swiping
+        console.log('TEMP DEBUG: Swiping left to delete');
         Animated.spring(translateX, { 
           toValue: -SCREEN_WIDTH, 
           useNativeDriver: true 
         }).start(() => handleDelete());
       }
       // Swipe right (keep) - threshold for swipe detection  
-      else if (tx > 100 || velocityX > 500) {
+      else if (tx > 50 || velocityX > 200) { // TEMP: Lowered thresholds for easier swiping
+        console.log('TEMP DEBUG: Swiping right to keep');
         Animated.spring(translateX, { 
           toValue: SCREEN_WIDTH, 
           useNativeDriver: true 
@@ -1394,6 +1440,14 @@ export default function App() {
                     draggedPhotoPosition={draggedPhotoPosition}
                     onLayout={(e) => handleFolderLayout(folder.id, e)}
                     onLongPress={handleFolderDelete}
+                    onPress={(folder) => {
+                      console.log('TEMP DEBUG: Folder pressed:', folder.name, 'isNew:', folder.isNew);
+                      if (folder.isNew) {
+                        console.log('TEMP DEBUG: Showing create folder modal via press');
+                        setShowCreateFolder(true);
+                        setShowExistingAlbums(false); // Go straight to name/emoji input
+                      }
+                    }}
                   />
                 ))}
               </View>
@@ -1759,7 +1813,7 @@ export default function App() {
                   style={[styles.modalButton, styles.modalCancelButton]}
                   onPress={() => {
                     setShowCreateFolder(false);
-                    setShowExistingAlbums(true);
+                    setShowExistingAlbums(false); // Keep it false for next time
                   }}
                 >
                   <Text style={[styles.modalButtonText, { color: '#333' }]}>{t('cancel')}</Text>
@@ -1799,7 +1853,7 @@ export default function App() {
                       setShowCreateFolder(false);
                       setNewFolderName('');
                       setSelectedFolderEmoji('📁');
-                      setShowExistingAlbums(true);
+                      setShowExistingAlbums(false); // Keep it false for next time
                     }}
                   >
                     <Text style={[styles.modalButtonText, { color: '#333' }]}>{t('cancel')}</Text>
@@ -3215,16 +3269,17 @@ const styles = StyleSheet.create({
     top: 10,
     left: 0,
     right: 0,
-    height: 100,
+    height: 150,
     zIndex: 10,
     paddingHorizontal: 10,
   },
   topFolderRow: {
     flexDirection: 'row',
-    justifyContent: 'space-evenly',
-    alignItems: 'center',
+    justifyContent: 'flex-start',
+    alignItems: 'flex-start',
     flexWrap: 'wrap',
     paddingTop: 10,
+    gap: 2,
   },
   // Create folder modal styles
   createFolderContent: {

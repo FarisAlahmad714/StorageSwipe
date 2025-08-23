@@ -11,7 +11,8 @@ const FolderNode = ({
   isDragging,
   onLayout,
   draggedPhotoPosition,
-  onLongPress 
+  onLongPress,
+  onPress 
 }) => {
   const scaleAnim = useRef(new Animated.Value(1)).current;
   const glowAnim = useRef(new Animated.Value(0)).current;
@@ -90,7 +91,9 @@ const FolderNode = ({
   };
 
   const handleLongPress = () => {
+    console.log('TEMP DEBUG: FolderNode handleLongPress called', { folder: folder.name, isNew: folder.isNew, hasOnLongPress: !!onLongPress });
     if (!folder.isNew && onLongPress) {
+      console.log('TEMP DEBUG: Showing delete folder alert for', folder.name);
       Alert.alert(
         'Delete Folder',
         `Remove "${folder.name}" from quick access?\n\nThis won't delete photos, just removes the folder shortcut.`,
@@ -99,15 +102,26 @@ const FolderNode = ({
           { 
             text: 'Remove', 
             style: 'destructive',
-            onPress: () => onLongPress(folder)
+            onPress: () => {
+              console.log('TEMP DEBUG: User confirmed folder deletion for', folder.name);
+              onLongPress(folder);
+            }
           }
         ]
       );
+    } else {
+      console.log('TEMP DEBUG: Long press ignored - isNew:', folder.isNew, 'hasOnLongPress:', !!onLongPress);
     }
   };
 
   return (
     <TouchableOpacity
+      onPress={() => {
+        console.log('TEMP DEBUG: FolderNode onPress triggered for', folder.name);
+        if (onPress) {
+          onPress(folder);
+        }
+      }}
       onLongPress={handleLongPress}
       delayLongPress={500}
       activeOpacity={0.8}
@@ -160,9 +174,9 @@ const styles = StyleSheet.create({
   container: {
     alignItems: 'center',
     justifyContent: 'center',
-    width: 80,
-    height: 80,
-    margin: 5,
+    width: 65,
+    height: 65,
+    margin: 4,
   },
   glowContainer: {
     position: 'absolute',
@@ -177,9 +191,9 @@ const styles = StyleSheet.create({
     borderRadius: 40,
   },
   folderContainer: {
-    width: 60,
-    height: 60,
-    borderRadius: 15,
+    width: 48,
+    height: 48,
+    borderRadius: 12,
     backgroundColor: 'white',
     alignItems: 'center',
     justifyContent: 'center',
@@ -202,11 +216,11 @@ const styles = StyleSheet.create({
     backgroundColor: '#E6F3FF',
   },
   folderIcon: {
-    fontSize: 28,
+    fontSize: 22,
   },
   folderName: {
-    marginTop: 5,
-    fontSize: 11,
+    marginTop: 4,
+    fontSize: 10,
     color: '#333',
     fontWeight: '500',
     textAlign: 'center',
@@ -218,19 +232,19 @@ const styles = StyleSheet.create({
   },
   badge: {
     position: 'absolute',
-    top: -5,
-    right: 10,
+    top: -4,
+    right: 8,
     backgroundColor: '#007AFF',
-    borderRadius: 10,
-    minWidth: 20,
-    height: 20,
+    borderRadius: 8,
+    minWidth: 16,
+    height: 16,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 5,
+    paddingHorizontal: 4,
   },
   badgeText: {
     color: 'white',
-    fontSize: 10,
+    fontSize: 9,
     fontWeight: 'bold',
   },
 });
