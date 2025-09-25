@@ -14,8 +14,45 @@ import { TextInput } from 'react-native';
 import OnboardingGuide from './components/OnboardingGuide';
 import PurchaseManager, { PRODUCT_IDS, ENTITLEMENT_ID } from './utils/purchaseManager';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as SplashScreen from 'expo-splash-screen';
+import AnimatedSplashScreen from './components/AnimatedSplashScreen';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+
+// Legal links
+const TERMS_OF_USE_URL = 'https://www.apple.com/legal/internet-services/itunes/dev/stdeula/';
+const PRIVACY_POLICY_URL = 'https://farisalahmad714.github.io/StorageSwipe/privacy-policy.html';
+
+// Video thumbnail component that shows actual frame like Apple gallery
+const VideoThumbnail = ({ video, style, onPress }) => {
+  return (
+    <TouchableOpacity onPress={onPress} style={style}>
+      <ExpoImage
+        source={{ uri: video.uri }}
+        style={[style, { borderRadius: 2 }]}
+        contentFit="cover"
+        transition={200}
+        placeholder={{ uri: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChAI/hL+bhwAAAABJRU5ErkJggg==' }}
+      />
+      <View style={styles.videoOverlaySmall}>
+        <Text style={styles.videoDurationBadge}>
+          {formatVideoDuration(video.duration)}
+        </Text>
+        <View style={styles.playIconSmall}>
+          <Text style={styles.playIconSmallText}>▶</Text>
+        </View>
+      </View>
+    </TouchableOpacity>
+  );
+};
+
+// Helper function to format video duration
+const formatVideoDuration = (duration) => {
+  if (!duration) return '0:00';
+  const minutes = Math.floor(duration / 60);
+  const seconds = Math.floor(duration % 60);
+  return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+};
 
 // Separate VideoPlayer component that only initializes when source is valid
 const VideoPlayer = ({ source, style }) => {
@@ -52,6 +89,43 @@ const VideoPlayer = ({ source, style }) => {
       nativeControls
       onEnterFullscreen={() => console.log('Entered fullscreen')}
       onExitFullscreen={() => console.log('Exited fullscreen')}
+    />
+  );
+};
+
+// Separate Modal VideoPlayer component - fresh instance
+const ModalVideoPlayer = ({ source, style }) => {
+  const [isPlaying, setIsPlaying] = useState(false);
+  
+  // Create a fresh video player instance for modal
+  const modalVideoPlayer = useVideoPlayer(source, (player) => {
+    console.log("ModalVideoPlayer component - source is:", source);
+    if (player && source) {
+      player.loop = false;
+      player.volume = 1.0;
+      player.muted = false;
+      // Auto-play videos when loaded
+      player.play();
+      setIsPlaying(true);
+    }
+  });
+
+  useEffect(() => {
+    if (modalVideoPlayer) {
+      const subscription = modalVideoPlayer.addListener('playingChange', (playing) => {
+        setIsPlaying(playing);
+      });
+      return () => subscription.remove();
+    }
+  }, [modalVideoPlayer]);
+
+  return (
+    <VideoView
+      style={style}
+      player={modalVideoPlayer}
+      allowsFullscreen
+      allowsPictureInPicture
+      nativeControls
     />
   );
 };
@@ -98,7 +172,7 @@ const translations = {
     save44: 'Save 44%',
     cancelAnytime: 'Cancel anytime',
     oneTimePayment: 'One-time payment',
-    freeTrialText: '• 3-day free trial • Cancel anytime • Secure payment',
+    freeTrialText: '• Cancel anytime • Secure payment',
     // Settings
     settings: 'Settings',
     language: 'Language',
@@ -106,6 +180,7 @@ const translations = {
     restoreFolders: 'Restore Hidden Folders',
     foldersRestored: 'All folders restored',
     viewGuide: 'View Tutorial',
+    manageSubscription: 'Manage Subscription',
     aboutApp: 'About',
     // Free limits
     swipesRemaining: 'swipes remaining',
@@ -158,6 +233,7 @@ const translations = {
     selectLanguage: 'Seleccionar Idioma',
     restoreFolders: 'Restaurar Carpetas Ocultas',
     foldersRestored: 'Todas las carpetas restauradas',
+    manageSubscription: 'Gestionar Suscripción',
     // Free limits
     swipesRemaining: 'deslizamientos restantes',
     unlimitedSwipes: 'Deslizamientos ilimitados'
@@ -200,6 +276,7 @@ const translations = {
     settings: 'Paramètres',
     language: 'Langue',
     selectLanguage: 'Sélectionner la Langue',
+    manageSubscription: 'Gérer l\'Abonnement',
     // Free limits
     swipesRemaining: 'glissements restants',
     unlimitedSwipes: 'Glissements illimités'
@@ -242,6 +319,7 @@ const translations = {
     settings: 'الإعدادات',
     language: 'اللغة',
     selectLanguage: 'اختر اللغة',
+    manageSubscription: 'إدارة الاشتراك',
     // Free limits
     swipesRemaining: 'سحبة متبقية',
     unlimitedSwipes: 'سحبات غير محدودة'
@@ -254,6 +332,9 @@ const languages = [
   { code: 'fr', name: 'Français', flag: '🇫🇷' },
   { code: 'ar', name: 'العربية', flag: '🇸🇦' }
 ];
+
+// Hide the native splash screen immediately
+SplashScreen.hideAsync();
 
 export default function App() {
   const [hasPermission, setHasPermission] = useState(null);
@@ -269,18 +350,24 @@ export default function App() {
   const [selectedCategory, setSelectedCategory] = useState(null);
   const [selectedDuplicateGroup, setSelectedDuplicateGroup] = useState(null);
   const [categoryMediaView, setCategoryMediaView] = useState(null);
+  const [modalMediaView, setModalMediaView] = useState(null); // New state for modal viewer
+  const [modalVideoSource, setModalVideoSource] = useState(null); // Processed video source for modal
+  const [modalCurrentUri, setModalCurrentUri] = useState(null); // Current URI for modal (like currentPhotoUri)
   const videoRef = useRef(null);
   
+  // Splash screen state - show animated splash immediately
+  const [showAnimatedSplash, setShowAnimatedSplash] = useState(true);
+  const [appReady, setAppReady] = useState(false);
+  
   // Paywall state
-  const [isPremium, setIsPremium] = useState(true); // TEMP: Set to true for screenshots
-  const [showPaywall, setShowPaywall] = useState(false);
+  const [isPremium, setIsPremium] = useState(false); // Back to proper subscription logic
+  const [showPaywall, setShowPaywall] = useState(true); // Show paywall by default
   const [purchaseLoading, setPurchaseLoading] = useState(false);
   
   // Settings state
   const [showSettings, setShowSettings] = useState(false);
   const [currentLanguage, setCurrentLanguage] = useState('en');
   
-  // All users need premium - no free tier
   
   // Ad overlay system
   const [adVehicles, setAdVehicles] = useState([]);
@@ -305,14 +392,22 @@ export default function App() {
   const [showExistingAlbums, setShowExistingAlbums] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const dropAnimationValue = useRef(new Animated.Value(0)).current;
+  // Legal modals (privacy opens hosted URL; no modal state needed)
 
   useEffect(() => {
-    checkPermissions();
-    // initializePurchases(); // TEMP: Disabled for screenshots
-    loadLanguage();
-    initializeAdSystem();
-    loadFolders(true); // Clear positions on initial load
-    checkOnboarding();
+    const initializeApp = async () => {
+      await checkPermissions();
+      initializePurchases(); // Re-enabled subscription logic
+      await loadLanguage();
+      initializeAdSystem();
+      await loadFolders(true); // Clear positions on initial load
+      await checkOnboarding();
+      
+      // Mark app as ready
+      setAppReady(true);
+    };
+    
+    initializeApp();
   }, []);
   
   // Check if user has seen onboarding
@@ -775,6 +870,70 @@ export default function App() {
     }
   }, [currentIndex, photos]);
 
+  // Process media source for modal viewer using same logic as swipe tab
+  useEffect(() => {
+    const processModalMedia = async () => {
+      console.log('processModalMedia called, modalMediaView:', modalMediaView);
+      if (modalMediaView?.media) {
+        if (modalMediaView.media.mediaType === 'video') {
+          console.log('Processing video for modal:', modalMediaView.media.id);
+          try {
+            const assetId = modalMediaView.media.id || modalMediaView.media.uri;
+            console.log('Getting asset info for:', assetId);
+            const assetInfo = await MediaLibrary.getAssetInfoAsync(assetId);
+            console.log('Asset info received:', assetInfo);
+            
+            // Get the appropriate URI
+            let videoUri = assetInfo.localUri || assetInfo.uri;
+            console.log('Raw video URI:', videoUri);
+            
+            // CRITICAL FIX: Clean iOS fragment identifier that causes video corruption
+            // iOS adds fragment identifiers like #YnBsaXN0... that break video playback
+            if (videoUri && videoUri.includes('#')) {
+              videoUri = videoUri.split('#')[0];
+              console.log('Cleaned video URI:', videoUri);
+            }
+            
+            console.log('Modal video loading - setting processed URIs:', videoUri);
+            // Set BOTH states like the swipe tab does
+            setModalCurrentUri(videoUri);
+            setModalVideoSource(videoUri);
+          } catch (error) {
+            console.error('Error loading modal video:', error);
+            console.log('Using fallback URI:', modalMediaView.media.uri);
+            // Fallback to basic uri
+            setModalCurrentUri(modalMediaView.media.uri);
+            setModalVideoSource(modalMediaView.media.uri);
+          }
+        } else {
+          // For photos, get asset info for better quality (like swipe tab does)
+          try {
+            const assetInfo = await MediaLibrary.getAssetInfoAsync(modalMediaView.media);
+            let photoUri = assetInfo.localUri || assetInfo.uri;
+            
+            // Also clean photo URIs if needed
+            if (photoUri && photoUri.includes('#')) {
+              photoUri = photoUri.split('#')[0];
+            }
+            
+            setModalCurrentUri(photoUri);
+            setModalVideoSource(null);
+          } catch (error) {
+            console.error('Error loading modal photo:', error);
+            setModalCurrentUri(modalMediaView.media.uri);
+            setModalVideoSource(null);
+          }
+        }
+      } else {
+        console.log('No media, clearing modal sources');
+        setModalCurrentUri(null);
+        setModalVideoSource(null);
+      }
+    };
+
+    processModalMedia();
+  }, [modalMediaView]);
+
   // Initialize RevenueCat
   const initializePurchases = async () => {
     try {
@@ -793,23 +952,18 @@ export default function App() {
   // Check if user has premium
   const checkPremiumStatus = async () => {
     try {
-      // TEMP: Always set premium to true for screenshots
-      setIsPremium(true);
-      await AsyncStorage.setItem('isPremium', 'true');
-      console.log('TEMP: Premium set to true for screenshots');
-      
-      // Original code commented out:
-      // const status = await PurchaseManager.checkSubscriptionStatus();
-      // setIsPremium(status.isSubscribed);
-      // await AsyncStorage.setItem('isPremium', status.isSubscribed.toString());
-      // if (status.isSubscribed) {
-      //   console.log('User has active Pro subscription');
-      // }
+      const status = await PurchaseManager.checkSubscriptionStatus();
+      setIsPremium(status.isSubscribed);
+      setShowPaywall(!status.isSubscribed); // Hide paywall if subscribed
+      await AsyncStorage.setItem('isPremium', status.isSubscribed.toString());
+      if (status.isSubscribed) {
+        console.log('User has active Pro subscription');
+      }
     } catch (error) {
       console.log('Error checking premium status:', error);
-      // TEMP: Always fallback to true for screenshots
-      setIsPremium(true);
-      await AsyncStorage.setItem('isPremium', 'true');
+      setIsPremium(false);
+      setShowPaywall(true); // Show paywall on error
+      await AsyncStorage.setItem('isPremium', 'false');
     }
   };
 
@@ -824,6 +978,7 @@ export default function App() {
       console.log('Error loading language:', error);
     }
   };
+
 
   // Change language
   const changeLanguage = async (languageCode) => {
@@ -1339,6 +1494,17 @@ export default function App() {
 
   const currentPhoto = photos[currentIndex];
 
+  // Show animated splash screen while app is loading
+  if (!appReady || showAnimatedSplash) {
+    return (
+      <AnimatedSplashScreen 
+        onAnimationComplete={() => {
+          setShowAnimatedSplash(false);
+        }}
+      />
+    );
+  }
+
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaView style={styles.container}>
@@ -1510,6 +1676,7 @@ export default function App() {
 
             <Text style={styles.counter}>{photos.length - currentIndex} {t('photosRemaining')}</Text>
             
+            
             <View style={styles.swipeInstructions}>
               <Text style={styles.swipeText}>{t('swipeInstructions')}</Text>
             </View>
@@ -1583,6 +1750,8 @@ export default function App() {
           </View>
         </View>
       </Modal>
+
+      {/* Privacy Policy opens via hosted URL; modal removed */}
 
       {/* Category Selection Modal */}
       <Modal
@@ -1658,38 +1827,59 @@ export default function App() {
             numColumns={3}
             keyExtractor={(item) => item.id}
             renderItem={({ item }) => (
-              <TouchableOpacity 
-                style={styles.mediaGridItem}
-                onPress={() => {
-                  // Toggle selection - add or remove from delete queue
-                  if (deletedPhotos.includes(item)) {
-                    // Remove from delete queue (uncheck)
-                    setDeletedPhotos(deletedPhotos.filter(photo => photo.id !== item.id));
-                  } else {
-                    // Add to delete queue (check)
-                    setDeletedPhotos([...deletedPhotos, item]);
-                  }
-                }}
-              >
+              <View style={styles.mediaGridItem}>
                 {item.mediaType === 'video' ? (
-                  <View style={[styles.mediaGridImage, styles.videoThumbnailSmall]}>
-                    <Text style={styles.videoIconSmall}>🎥</Text>
-                  </View>
-                ) : (
-                  <ExpoImage
-                    source={{ uri: item.uri }}
+                  <VideoThumbnail
+                    video={item}
                     style={styles.mediaGridImage}
-                    contentFit="cover"
-                    transition={200}
-                    placeholder={{ uri: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChAI/hL+bhwAAAABJRU5ErkJggg==' }}
+                    onPress={() => {
+                      // Open modal viewer for videos
+                      console.log('Video thumbnail pressed, opening modal viewer');
+                      setModalMediaView({ media: item, mediaList: categoryMediaView.items, previousCategoryView: categoryMediaView });
+                      setCategoryMediaView(null); // Hide category modal
+                    }}
                   />
+                ) : (
+                  <TouchableOpacity 
+                    style={styles.mediaGridImage}
+                    onPress={() => {
+                      // Open modal viewer for photos
+                      console.log('Photo thumbnail pressed, opening modal viewer');
+                      setModalMediaView({ media: item, mediaList: categoryMediaView.items, previousCategoryView: categoryMediaView });
+                      setCategoryMediaView(null); // Hide category modal
+                    }}
+                  >
+                    <ExpoImage
+                      source={{ uri: item.uri }}
+                      style={styles.mediaGridImage}
+                      contentFit="cover"
+                      transition={200}
+                      placeholder={{ uri: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChAI/hL+bhwAAAABJRU5ErkJggg==' }}
+                    />
+                  </TouchableOpacity>
                 )}
-                {deletedPhotos.includes(item) && (
-                  <View style={styles.selectedOverlay}>
-                    <Text style={styles.selectedText}>✓</Text>
+                
+                {/* Selection overlay for multi-select */}
+                <TouchableOpacity 
+                  style={styles.selectionButton}
+                  onPress={() => {
+                    // Toggle selection - add or remove from delete queue
+                    if (deletedPhotos.includes(item)) {
+                      // Remove from delete queue (uncheck)
+                      setDeletedPhotos(deletedPhotos.filter(photo => photo.id !== item.id));
+                    } else {
+                      // Add to delete queue (check)
+                      setDeletedPhotos([...deletedPhotos, item]);
+                    }
+                  }}
+                >
+                  <View style={[styles.selectionCircle, deletedPhotos.includes(item) && styles.selectionCircleSelected]}>
+                    {deletedPhotos.includes(item) && (
+                      <Text style={styles.selectedText}>✓</Text>
+                    )}
                   </View>
-                )}
-              </TouchableOpacity>
+                </TouchableOpacity>
+              </View>
             )}
             contentContainerStyle={styles.mediaGrid}
           />
@@ -1762,6 +1952,26 @@ export default function App() {
               >
                 <Text style={styles.viewGuideText}>{t('viewGuide')}</Text>
               </TouchableOpacity>
+              
+              <TouchableOpacity
+                style={styles.manageSubscriptionButton}
+                onPress={() => {
+                  Linking.openURL('https://apps.apple.com/account/subscriptions');
+                }}
+              >
+                <Text style={styles.manageSubscriptionText}>{t('manageSubscription')}</Text>
+              </TouchableOpacity>
+
+              {/* Legal links in Settings */}
+              <View style={styles.legalSettingsRow}>
+                <TouchableOpacity onPress={() => Linking.openURL(PRIVACY_POLICY_URL)}>
+                  <Text style={styles.legalSettingsLink}>Privacy Policy</Text>
+                </TouchableOpacity>
+                <Text style={styles.legalSeparator}>•</Text>
+                <TouchableOpacity onPress={() => Linking.openURL(TERMS_OF_USE_URL)}>
+                  <Text style={styles.legalSettingsLink}>Terms of Use</Text>
+                </TouchableOpacity>
+              </View>
             </View>
           </View>
         </SafeAreaView>
@@ -1875,18 +2085,9 @@ export default function App() {
       <Modal
         visible={showPaywall}
         animationType="slide"
-        presentationStyle="pageSheet"
-        onRequestClose={() => setShowPaywall(false)}
+        presentationStyle="fullScreen"
       >
         <SafeAreaView style={styles.paywallContainer}>
-          <View style={styles.paywallHeader}>
-            <TouchableOpacity 
-              style={styles.paywallClose}
-              onPress={() => setShowPaywall(false)}
-            >
-              <Text style={styles.paywallCloseText}>✕</Text>
-            </TouchableOpacity>
-          </View>
           
           <ScrollView contentContainerStyle={styles.paywallContent}>
             <Text style={styles.paywallTitle}>Unlock StorageSwipe Premium</Text>
@@ -1951,9 +2152,18 @@ export default function App() {
               <ActivityIndicator size="large" color="#007AFF" style={styles.purchaseLoader} />
             )}
             
-            <Text style={styles.paywallFooter}>
-              • 3-day free trial • Cancel anytime • Secure payment
-            </Text>
+            <Text style={styles.paywallFooter}>• Cancel anytime • Secure payment</Text>
+
+            {/* Legal links */}
+            <View style={styles.legalLinksRow}>
+              <TouchableOpacity onPress={() => Linking.openURL(PRIVACY_POLICY_URL)}>
+                <Text style={styles.legalLinkText}>Privacy Policy</Text>
+              </TouchableOpacity>
+              <Text style={styles.legalSeparator}>•</Text>
+              <TouchableOpacity onPress={() => Linking.openURL(TERMS_OF_USE_URL)}>
+                <Text style={styles.legalLinkText}>Terms of Use</Text>
+              </TouchableOpacity>
+            </View>
           </ScrollView>
         </SafeAreaView>
       </Modal>
@@ -2142,6 +2352,101 @@ export default function App() {
         visible={showOnboarding} 
         onComplete={() => setShowOnboarding(false)} 
       />
+
+      {/* Media Modal Viewer - Positioned last for highest z-index */}
+      <Modal
+        visible={!!modalMediaView}
+        animationType="fade"
+        presentationStyle="fullScreen"
+        onRequestClose={() => {
+          const previousCategory = modalMediaView?.previousCategoryView;
+          setModalMediaView(null);
+          if (previousCategory) {
+            setCategoryMediaView(previousCategory); // Restore category modal
+          }
+        }}
+      >
+        {console.log('Media Modal Viewer render, modalMediaView:', !!modalMediaView)}
+        <SafeAreaView style={styles.modalViewerContainer}>
+          <View style={styles.modalViewerHeader}>
+            <TouchableOpacity 
+              onPress={() => {
+                const previousCategory = modalMediaView?.previousCategoryView;
+                setModalMediaView(null);
+                if (previousCategory) {
+                  setCategoryMediaView(previousCategory); // Restore category modal
+                }
+              }}
+              style={styles.modalViewerCloseButton}
+            >
+              <Text style={styles.modalViewerCloseText}>✕</Text>
+            </TouchableOpacity>
+            
+            <TouchableOpacity 
+              onPress={() => {
+                if (modalMediaView?.media) {
+                  // Toggle selection for the currently viewed media
+                  const media = modalMediaView.media;
+                  if (deletedPhotos.includes(media)) {
+                    setDeletedPhotos(deletedPhotos.filter(photo => photo.id !== media.id));
+                  } else {
+                    setDeletedPhotos([...deletedPhotos, media]);
+                  }
+                }
+              }}
+              style={styles.modalViewerSelectButton}
+            >
+              <View style={[
+                styles.modalViewerSelectCircle, 
+                modalMediaView?.media && deletedPhotos.includes(modalMediaView.media) && styles.modalViewerSelectCircleSelected
+              ]}>
+                {modalMediaView?.media && deletedPhotos.includes(modalMediaView.media) && (
+                  <Text style={styles.modalViewerSelectedText}>✓</Text>
+                )}
+              </View>
+            </TouchableOpacity>
+          </View>
+          
+          <View style={styles.modalViewerContent}>
+            {modalCurrentUri ? (
+              modalMediaView?.media?.mediaType === 'video' ? (
+                <View style={styles.modalViewerVideoContainer}>
+                  {modalVideoSource ? (
+                    <ModalVideoPlayer 
+                      source={modalVideoSource}
+                      style={styles.modalViewerMedia}
+                    />
+                  ) : (
+                    <View style={styles.modalViewerMedia}>
+                      <ActivityIndicator size="large" color="#999" />
+                    </View>
+                  )}
+                </View>
+              ) : (
+                <ExpoImage
+                  source={{ uri: modalCurrentUri }}
+                  style={styles.modalViewerMedia}
+                  contentFit="contain"
+                  transition={200}
+                />
+              )
+            ) : (
+              <View style={styles.modalViewerMedia}>
+                <ActivityIndicator size="large" color="#999" />
+              </View>
+            )}
+          </View>
+          
+          <View style={styles.modalViewerFooter}>
+            <Text style={styles.modalViewerInfo}>
+              {modalMediaView?.media?.mediaType === 'video' ? '🎥 Video' : '📷 Photo'}
+              {modalMediaView?.media?.creationTime && 
+                ` • ${new Date(modalMediaView.media.creationTime).toLocaleDateString()}`
+              }
+            </Text>
+          </View>
+        </SafeAreaView>
+      </Modal>
       </SafeAreaView>
     </GestureHandlerRootView>
   );
@@ -2362,6 +2667,166 @@ const styles = StyleSheet.create({
   videoIconSmall: {
     fontSize: 30,
     opacity: 0.5,
+  },
+  // Video thumbnail overlay styles
+  videoOverlaySmall: {
+    position: 'absolute',
+    bottom: 4,
+    left: 4,
+    right: 4,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  videoDurationBadge: {
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    color: 'white',
+    fontSize: 10,
+    fontWeight: 'bold',
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+    borderRadius: 3,
+  },
+  playIconSmall: {
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  playIconSmallText: {
+    color: '#333',
+    fontSize: 10,
+    fontWeight: 'bold',
+    marginLeft: 1,
+  },
+  // Selection button styles
+  selectionButton: {
+    position: 'absolute',
+    top: 4,
+    right: 4,
+    padding: 4,
+  },
+  selectionCircle: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: 'white',
+    backgroundColor: 'transparent',
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.3,
+    shadowRadius: 2,
+  },
+  selectionCircleSelected: {
+    backgroundColor: '#007AFF',
+    borderColor: '#007AFF',
+  },
+  // Modal viewer styles
+  modalViewerContainer: {
+    flex: 1,
+    backgroundColor: 'black',
+    zIndex: 9999,
+    elevation: 24,
+  },
+  modalViewerHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+  },
+  modalViewerCloseButton: {
+    padding: 8,
+  },
+  modalViewerCloseText: {
+    color: 'white',
+    fontSize: 20,
+    fontWeight: 'bold',
+  },
+  modalViewerSelectButton: {
+    padding: 8,
+  },
+  modalViewerSelectCircle: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    borderWidth: 2,
+    borderColor: 'white',
+    backgroundColor: 'transparent',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalViewerSelectCircleSelected: {
+    backgroundColor: '#007AFF',
+    borderColor: '#007AFF',
+  },
+  modalViewerSelectedText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  modalViewerContent: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalViewerMedia: {
+    width: '100%',
+    height: '100%',
+  },
+  modalViewerVideoContainer: {
+    width: '100%',
+    height: '100%',
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'black',
+  },
+  modalViewerFooter: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+  },
+  modalViewerInfo: {
+    color: 'white',
+    fontSize: 14,
+    textAlign: 'center',
+    opacity: 0.8,
+  },
+  videoPlayOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.3)',
+  },
+  playButton: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  playButtonText: {
+    fontSize: 32,
+    color: '#333',
+    marginLeft: 4,
+  },
+  videoPlayText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: 'bold',
+    textAlign: 'center',
   },
   playButtonOverlay: {
     position: 'absolute',
@@ -2856,6 +3321,23 @@ const styles = StyleSheet.create({
     color: '#999',
     textAlign: 'center',
     lineHeight: 18,
+  },
+  legalLinksRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 8,
+    marginBottom: 16,
+  },
+  legalSeparator: {
+    color: '#9ca3af',
+    paddingHorizontal: 12,
+  },
+  legalLinkText: {
+    color: '#007AFF',
+    textAlign: 'center',
+    textDecorationLine: 'underline',
+    fontSize: 14,
   },
   restorePurchasesButton: {
     paddingVertical: 12,
@@ -3398,6 +3880,51 @@ const styles = StyleSheet.create({
   viewGuideText: {
     color: '#007AFF',
     fontSize: 16,
+    fontWeight: '500',
+  },
+  manageSubscriptionButton: {
+    backgroundColor: '#FFE6F0',
+    paddingVertical: 15,
+    paddingHorizontal: 20,
+    borderRadius: 10,
+    alignItems: 'center',
+    marginTop: 10,
+  },
+  manageSubscriptionText: {
+    color: '#FF3366',
+    fontSize: 16,
+    fontWeight: '500',
+  },
+  legalSettingsRow: {
+    marginTop: 16,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  legalSettingsLink: {
+    color: '#007AFF',
+    textDecorationLine: 'underline',
+    fontSize: 14,
+  },
+  // Privacy modal styles removed (using hosted URL instead)
+  // Swipe counter styles
+  swipeCounter: {
+    marginVertical: 8,
+    alignItems: 'center',
+  },
+  swipeCountText: {
+    fontSize: 14,
+    color: '#666',
+  },
+  swipeCountWarning: {
+    color: '#ff6b35',
+    fontWeight: 'bold',
+  },
+  limitReachedText: {
+    fontSize: 12,
+    color: '#ff4444',
+    textAlign: 'center',
+    marginTop: 4,
     fontWeight: '500',
   },
 });
