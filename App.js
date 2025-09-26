@@ -140,6 +140,7 @@ const translations = {
     delete: 'Delete',
     keep: 'Keep',
     photosRemaining: 'photos remaining',
+    restart: 'Restart',
     swipeInstructions: '💡 Swipe left to delete • Swipe right to keep • Drag to folders to organize',
     confirmDelete: 'Confirm Delete',
     dragToOrganize: 'Drag to folders to organize',
@@ -194,6 +195,7 @@ const translations = {
     delete: 'Eliminar',
     keep: 'Mantener',
     photosRemaining: 'fotos restantes',
+    restart: 'Reiniciar',
     swipeInstructions: '💡 Desliza izquierda para eliminar • Desliza derecha para mantener • Arrastra a carpetas para organizar',
     confirmDelete: 'Confirmar Eliminación',
     dragToOrganize: 'Arrastra a carpetas para organizar',
@@ -246,6 +248,7 @@ const translations = {
     delete: 'Supprimer',
     keep: 'Garder',
     photosRemaining: 'photos restantes',
+    restart: 'Redémarrer',
     swipeInstructions: '💡 Balayez à gauche pour supprimer • Balayez à droite pour garder',
     confirmDelete: 'Confirmer la Suppression',
     screenshots: 'Captures',
@@ -289,6 +292,7 @@ const translations = {
     delete: 'حذف',
     keep: 'احتفظ',
     photosRemaining: 'صورة متبقية',
+    restart: 'إعادة تشغيل',
     swipeInstructions: '💡 اسحب يسارًا للحذف • اسحب يمينًا للاحتفاظ',
     confirmDelete: 'تأكيد الحذف',
     screenshots: 'لقطات الشاشة',
@@ -367,8 +371,11 @@ export default function App() {
   // Settings state
   const [showSettings, setShowSettings] = useState(false);
   const [currentLanguage, setCurrentLanguage] = useState('en');
-  
-  
+
+  // Delete review modal state
+  const [showDeleteReview, setShowDeleteReview] = useState(false);
+  const [finalDeleteQueue, setFinalDeleteQueue] = useState([]);
+
   // Ad overlay system
   const [adVehicles, setAdVehicles] = useState([]);
   const [activeAds, setActiveAds] = useState([]);
@@ -1129,15 +1136,40 @@ export default function App() {
 
   const confirmDelete = async () => {
     if (deletedPhotos.length === 0) return;
-    
+
+    // Show review modal instead of immediate deletion
+    setFinalDeleteQueue([...deletedPhotos]);
+    setShowDeleteReview(true);
+  };
+
+  const finalDelete = async () => {
+    if (finalDeleteQueue.length === 0) return;
+
     try {
-      await MediaLibrary.deleteAssetsAsync(deletedPhotos);
-      Alert.alert('Success', `Deleted ${deletedPhotos.length} photos`);
+      await MediaLibrary.deleteAssetsAsync(finalDeleteQueue);
+      Alert.alert('Success', `Deleted ${finalDeleteQueue.length} photos`);
       setDeletedPhotos([]);
+      setFinalDeleteQueue([]);
+      setShowDeleteReview(false);
       loadPhotos();
     } catch (error) {
       Alert.alert('Error', 'Failed to delete photos');
     }
+  };
+
+  const handleRestart = () => {
+    // Reset everything to start fresh
+    setCurrentIndex(0);
+    setDeletedPhotos([]);
+    setFinalDeleteQueue([]);
+    setShowDeleteReview(false);
+    resetAnimation();
+
+    // Clear current photo/video states
+    setCurrentPhotoUri(null);
+    setVideoSource(null);
+
+    console.log('Gallery restarted - reset to beginning');
   };
 
   if (hasPermission === null) {
@@ -1526,19 +1558,6 @@ export default function App() {
             </View>
           </View>
           <View style={styles.headerButtons}>
-            {/* Reset button for testing - remove in production */}
-            {isPremium && (
-              <TouchableOpacity 
-                style={styles.resetButton}
-                onPress={async () => {
-                  await AsyncStorage.removeItem('isPremium');
-                  setIsPremium(false);
-                  Alert.alert('Reset', 'Premium status cleared for testing');
-                }}
-              >
-                <Text style={styles.resetText}>Reset</Text>
-              </TouchableOpacity>
-            )}
             <TouchableOpacity 
               style={styles.settingsButton}
               onPress={() => setShowSettings(true)}
@@ -1675,8 +1694,11 @@ export default function App() {
             </View>
 
             <Text style={styles.counter}>{photos.length - currentIndex} {t('photosRemaining')}</Text>
-            
-            
+
+            <TouchableOpacity style={styles.restartButton} onPress={handleRestart}>
+              <Text style={styles.restartButtonText}>{t('restart')}</Text>
+            </TouchableOpacity>
+
             <View style={styles.swipeInstructions}>
               <Text style={styles.swipeText}>{t('swipeInstructions')}</Text>
             </View>
@@ -1743,6 +1765,83 @@ export default function App() {
               <TouchableOpacity 
                 style={[styles.modalButton, styles.modalCancelButton]}
                 onPress={() => setSelectedDuplicateGroup(null)}
+              >
+                <Text style={[styles.modalButtonText, { color: '#333' }]}>Cancel</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Delete Review Modal */}
+      <Modal
+        visible={showDeleteReview}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setShowDeleteReview(false)}
+      >
+        <View style={styles.modalContainer}>
+          <View style={[styles.modalContent, styles.deleteReviewContent]}>
+            <Text style={styles.modalTitle}>Review Items to Delete</Text>
+            <Text style={styles.modalSubtitle}>
+              {finalDeleteQueue.length} items selected • Tap to unselect
+            </Text>
+
+            <ScrollView style={styles.deleteReviewGrid} showsVerticalScrollIndicator={false}>
+              <View style={styles.deleteReviewRow}>
+                {finalDeleteQueue.map((item, index) => (
+                  <TouchableOpacity
+                    key={item.id || index}
+                    style={styles.deleteReviewItem}
+                    onPress={() => {
+                      // Remove item from final delete queue
+                      const updatedQueue = finalDeleteQueue.filter(photo => photo.id !== item.id);
+                      setFinalDeleteQueue(updatedQueue);
+
+                      // If no items left, close modal and clear deletedPhotos
+                      if (updatedQueue.length === 0) {
+                        setShowDeleteReview(false);
+                        setDeletedPhotos([]);
+                      }
+                    }}
+                  >
+                    <View style={styles.deleteReviewImageContainer}>
+                      {item.mediaType === 'video' ? (
+                        <View style={[styles.deleteReviewImage, styles.videoThumbnailReview]}>
+                          <Text style={styles.videoIconReview}>🎥</Text>
+                        </View>
+                      ) : (
+                        <ExpoImage
+                          source={{ uri: item.uri }}
+                          style={styles.deleteReviewImage}
+                          contentFit="cover"
+                          placeholder="📷"
+                        />
+                      )}
+
+                      {/* Selected indicator */}
+                      <View style={styles.deleteReviewSelectedIndicator}>
+                        <Text style={styles.deleteReviewSelectedText}>✓</Text>
+                      </View>
+                    </View>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </ScrollView>
+
+            <View style={styles.modalButtons}>
+              <TouchableOpacity
+                style={[styles.modalButton, styles.modalDeleteButton]}
+                onPress={finalDelete}
+                disabled={finalDeleteQueue.length === 0}
+              >
+                <Text style={styles.modalButtonText}>
+                  Delete {finalDeleteQueue.length} Items
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalButton, styles.modalCancelButton]}
+                onPress={() => setShowDeleteReview(false)}
               >
                 <Text style={[styles.modalButtonText, { color: '#333' }]}>Cancel</Text>
               </TouchableOpacity>
@@ -3372,17 +3471,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 10,
   },
-  resetButton: {
-    backgroundColor: '#ff4444',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 15,
-  },
-  resetText: {
-    color: 'white',
-    fontSize: 12,
-    fontWeight: 'bold',
-  },
   settingsButton: {
     width: 30,
     height: 30,
@@ -3926,5 +4014,75 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: 4,
     fontWeight: '500',
+  },
+
+  // Delete Review Modal Styles
+  deleteReviewContent: {
+    maxHeight: '80%',
+    minHeight: '50%',
+  },
+  deleteReviewGrid: {
+    flex: 1,
+    marginVertical: 20,
+  },
+  deleteReviewRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-around',
+    paddingHorizontal: 10,
+  },
+  deleteReviewItem: {
+    width: '30%',
+    aspectRatio: 1,
+    marginBottom: 10,
+  },
+  deleteReviewImageContainer: {
+    width: '100%',
+    height: '100%',
+    position: 'relative',
+  },
+  deleteReviewImage: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 8,
+  },
+  videoThumbnailReview: {
+    backgroundColor: '#333',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  videoIconReview: {
+    fontSize: 20,
+    color: 'white',
+  },
+  deleteReviewSelectedIndicator: {
+    position: 'absolute',
+    top: 5,
+    right: 5,
+    backgroundColor: '#4CAF50',
+    borderRadius: 10,
+    width: 20,
+    height: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  deleteReviewSelectedText: {
+    color: 'white',
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+
+  // Restart Button Styles
+  restartButton: {
+    backgroundColor: '#FF9500',
+    paddingHorizontal: 20,
+    paddingVertical: 8,
+    borderRadius: 20,
+    marginBottom: 20,
+  },
+  restartButtonText: {
+    color: 'white',
+    fontSize: 14,
+    fontWeight: '600',
   },
 });
