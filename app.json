@@ -35,7 +35,7 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.fwayne714.storageswipe",
-      "buildNumber": "23",
+      "buildNumber": "25",
       "infoPlist": {
         "NSPhotoLibraryUsageDescription": "StorageSwipe needs access to your photos to help you clean up your gallery.",
         "NSPhotoLibraryAddUsageDescription": "StorageSwipe needs permission to save photos and create albums.",

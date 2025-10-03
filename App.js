@@ -150,9 +150,7 @@ const translations = {
     create: 'Create',
     addedToFolder: 'Added to',
     folderCreated: 'Folder created',
-    screenshots: 'Screenshots',
     whatsapp: 'WhatsApp',
-    camera: 'Camera',
     socialMedia: 'Social Media',
     videos: 'Videos',
     other: 'Other',
@@ -205,9 +203,7 @@ const translations = {
     create: 'Crear',
     addedToFolder: 'Agregado a',
     folderCreated: 'Carpeta creada',
-    screenshots: 'Capturas',
-    whatsapp: 'WhatsApp',
-    camera: 'Cámara', 
+    whatsapp: 'WhatsApp', 
     socialMedia: 'Redes Sociales',
     videos: 'Videos',
     other: 'Otros',
@@ -251,9 +247,7 @@ const translations = {
     restart: 'Redémarrer',
     swipeInstructions: '💡 Balayez à gauche pour supprimer • Balayez à droite pour garder',
     confirmDelete: 'Confirmer la Suppression',
-    screenshots: 'Captures',
     whatsapp: 'WhatsApp',
-    camera: 'Appareil Photo',
     socialMedia: 'Réseaux Sociaux',
     videos: 'Vidéos',
     other: 'Autres',
@@ -295,9 +289,7 @@ const translations = {
     restart: 'إعادة تشغيل',
     swipeInstructions: '💡 اسحب يسارًا للحذف • اسحب يمينًا للاحتفاظ',
     confirmDelete: 'تأكيد الحذف',
-    screenshots: 'لقطات الشاشة',
     whatsapp: 'واتساب',
-    camera: 'الكاميرا',
     socialMedia: 'وسائل التواصل',
     videos: 'الفيديوهات',
     other: 'أخرى',
@@ -409,12 +401,18 @@ export default function App() {
       initializeAdSystem();
       await loadFolders(true); // Clear positions on initial load
       await checkOnboarding();
-      
+
       // Mark app as ready
       setAppReady(true);
     };
-    
+
     initializeApp();
+
+    // Cleanup function
+    return () => {
+      adTimers.current.forEach(timer => clearTimeout(timer));
+      adTimers.current = [];
+    };
   }, []);
   
   // Check if user has seen onboarding
@@ -458,6 +456,18 @@ export default function App() {
 
   // Ad system configuration - using your custom images from assets/
   const AD_VEHICLES = [
+    {
+      id: 'chartsense_1',
+      type: 'chartsense',
+      image: require('./assets/chartsense.jpg'),
+      lane: 1,
+      speed: 7000,
+      interval: 120000, // 2 minutes
+      banner: 'ChartSense - Trading Smarter, Together',
+      color: '#2E7FFF',
+      url: 'https://chartsense.trade',
+      hasThrottle: true
+    },
     {
       id: 'spaceship_1',
       type: 'spaceship',
@@ -508,30 +518,39 @@ export default function App() {
     }
   ];
 
+  // Timer refs for cleanup
+  const adTimers = useRef([]);
+
   // Initialize ad system - show one vehicle every 2 minutes
   const initializeAdSystem = () => {
+    // Clear any existing timers
+    adTimers.current.forEach(timer => clearTimeout(timer));
+    adTimers.current = [];
+
     // Clear any existing spawning vehicles
     spawningVehicles.current.clear();
-    
+
     let currentVehicleIndex = 0;
-    
+
     const showNextVehicle = () => {
       // Only spawn if no vehicles are currently active
       if (activeAds.length === 0) {
         const vehicle = AD_VEHICLES[currentVehicleIndex];
         const direction = Math.random() > 0.5 ? 'left-to-right' : 'right-to-left';
         spawnVehicle(vehicle, direction);
-        
+
         // Move to next vehicle for next time
         currentVehicleIndex = (currentVehicleIndex + 1) % AD_VEHICLES.length;
       }
-      
+
       // Schedule next vehicle in 2 minutes
-      setTimeout(showNextVehicle, 120000); // 2 minutes = 120,000ms
+      const timer = setTimeout(showNextVehicle, 120000); // 2 minutes = 120,000ms
+      adTimers.current.push(timer);
     };
-    
+
     // Start first vehicle after 30 seconds
-    setTimeout(showNextVehicle, 30000);
+    const initialTimer = setTimeout(showNextVehicle, 30000);
+    adTimers.current.push(initialTimer);
   };
 
   // Check if vehicle type already exists on screen or is being spawned
@@ -1197,9 +1216,7 @@ export default function App() {
 
   const renderCategoriesView = () => {
     const categoryInfo = {
-      screenshot: { emoji: '📱', label: 'Screenshots' },
       whatsapp: { emoji: '💬', label: 'WhatsApp' },
-      camera: { emoji: '📷', label: 'Camera' },
       downloads: { emoji: '⬇️', label: 'Social Media' },
       video: { emoji: '🎥', label: 'Videos' },
       other: { emoji: '📁', label: 'Other' }
@@ -1245,7 +1262,7 @@ export default function App() {
             <Text style={styles.sectionTitle}>Auto-Detected Categories</Text>
             <View style={styles.categoryGrid}>
               {Object.entries(categoryData).map(([category, items]) => (
-                items.length > 0 && (
+                items.length > 0 && categoryInfo[category] && (
                   <TouchableOpacity
                     key={category}
                     style={styles.categoryCard}
@@ -2351,10 +2368,31 @@ export default function App() {
                 <View style={styles.vehicleWithEffects}>
                   {/* Animated Throttle flames for spaceship */}
                   {vehicle.hasThrottle && (
-                    <Animated.View 
+                    <Animated.View
                       style={[
-                        vehicle.isFlipped ? styles.throttleContainerFlipped : styles.throttleContainer,
-                        { opacity: vehicle.throttleFlicker }
+                        {
+                          position: 'absolute',
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          zIndex: 1,
+                          opacity: vehicle.throttleFlicker,
+                        },
+                        {
+                          transform: [
+                            {
+                              translateX: vehicle.flipRotation.interpolate({
+                                inputRange: [0, 1],
+                                outputRange: [-30, 30]
+                              })
+                            },
+                            {
+                              scaleX: vehicle.flipRotation.interpolate({
+                                inputRange: [0, 1],
+                                outputRange: [1, -1]
+                              })
+                            }
+                          ]
+                        }
                       ]}
                     >
                       <View style={styles.flameParticle1} />
@@ -2365,10 +2403,31 @@ export default function App() {
                   
                   {/* Animated Smoke trail for plane */}
                   {vehicle.hasSmoke && (
-                    <Animated.View 
+                    <Animated.View
                       style={[
-                        vehicle.isFlipped ? styles.smokeContainerFlipped : styles.smokeContainer,
-                        { opacity: vehicle.smokeOpacity }
+                        {
+                          position: 'absolute',
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          zIndex: 1,
+                          opacity: vehicle.smokeOpacity,
+                        },
+                        {
+                          transform: [
+                            {
+                              translateX: vehicle.flipRotation.interpolate({
+                                inputRange: [0, 1],
+                                outputRange: [-45, 45]
+                              })
+                            },
+                            {
+                              scaleX: vehicle.flipRotation.interpolate({
+                                inputRange: [0, 1],
+                                outputRange: [1, -1]
+                              })
+                            }
+                          ]
+                        }
                       ]}
                     >
                       <View style={styles.smokePuff1} />
@@ -2379,17 +2438,17 @@ export default function App() {
                   
                   {/* Vehicle - Image with animated direction flip */}
                   {vehicle.image ? (
-                    <Animated.Image 
-                      source={vehicle.image} 
+                    <Animated.Image
+                      source={vehicle.image}
                       style={[
-                        styles.vehicleImage,
-                        { 
-                          transform: [{ 
+                        vehicle.type === 'chartsense' ? styles.vehicleImageLarge : styles.vehicleImage,
+                        vehicle.type === 'chartsense' ? {} : {
+                          transform: [{
                             scaleX: vehicle.flipRotation.interpolate({
                               inputRange: [0, 1],
                               outputRange: [1, -1]
                             })
-                          }] 
+                          }]
                         }
                       ]}
                       resizeMode="contain"
@@ -2432,12 +2491,17 @@ export default function App() {
                 </View>
                 
                 {/* Clickable Ad banner hanging below vehicle */}
-                <TouchableOpacity 
-                  style={[styles.adBanner, { backgroundColor: vehicle.color }]}
+                <TouchableOpacity
+                  style={[
+                    vehicle.type === 'chartsense' ? styles.adBannerSmall : styles.adBanner,
+                    { backgroundColor: vehicle.color }
+                  ]}
                   onPress={(event) => handleAdClick(vehicle.url, event)}
                   activeOpacity={0.8}
                 >
-                  <Text style={styles.adBannerText}>{vehicle.banner}</Text>
+                  <Text style={vehicle.type === 'chartsense' ? styles.adBannerTextSmall : styles.adBannerText}>
+                    {vehicle.banner}
+                  </Text>
                   <Text style={styles.tapHint}>👆 Tap</Text>
                 </TouchableOpacity>
               </View>
@@ -3692,13 +3756,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     zIndex: 1,
   },
-  throttleContainerFlipped: {
-    position: 'absolute',
-    right: -30, // Flames appear behind when going right-to-left
-    flexDirection: 'row-reverse', // Reverse flame order
-    alignItems: 'center',
-    zIndex: 1,
-  },
   flameParticle1: {
     width: 12,
     height: 20,
@@ -3740,13 +3797,6 @@ const styles = StyleSheet.create({
     position: 'absolute',
     left: -45,
     flexDirection: 'row',
-    alignItems: 'center',
-    zIndex: 1,
-  },
-  smokeContainerFlipped: {
-    position: 'absolute',
-    right: -45, // Smoke appears behind when going right-to-left
-    flexDirection: 'row-reverse', // Reverse smoke puff order
     alignItems: 'center',
     zIndex: 1,
   },
@@ -3824,6 +3874,35 @@ const styles = StyleSheet.create({
     fontSize: 12,
     textAlign: 'center',
     fontWeight: '600',
+  },
+  vehicleImageLarge: {
+    width: 100, // Bigger image - increased from 60
+    height: 100, // Bigger image - increased from 60
+    zIndex: 2,
+  },
+  adBannerSmall: {
+    paddingHorizontal: 12, // Smaller banner - decreased from 20
+    paddingVertical: 6, // Decreased from 10
+    borderRadius: 15, // Decreased from 20
+    minWidth: 100, // Decreased from 150
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 6,
+    elevation: 8,
+    borderWidth: 2,
+    borderColor: 'rgba(255,255,255,0.3)',
+  },
+  adBannerTextSmall: {
+    color: 'white',
+    fontSize: 11, // Even smaller text - decreased from 16
+    fontWeight: 'bold',
+    textAlign: 'center',
+    textShadowColor: 'rgba(0,0,0,0.7)',
+    textShadowOffset: { width: 1, height: 1 },
+    textShadowRadius: 3,
+    marginBottom: 2,
   },
   // Folder system styles
   swipeContainer: {

@@ -5,9 +5,7 @@ const CUSTOM_ALBUMS_KEY = 'storageswipe_custom_albums';
 
 // Default system folders to display - reduced for cleaner UI
 export const DEFAULT_FOLDERS = [
-  { id: 'camera', name: 'Camera', icon: '📷', isSystem: true },
   { id: 'favorites', name: 'Favorites', icon: '⭐', isSystem: true },
-  { id: 'screenshots', name: 'Screenshots', icon: '📱', isSystem: true },
   { id: 'work', name: 'Work', icon: '💼', isCustom: true },
   { id: 'family', name: 'Family', icon: '👨‍👩‍👧‍👦', isCustom: true },
 ];
@@ -178,11 +176,9 @@ export class AlbumManager {
 // Helper function to determine which folder a photo belongs to based on its path
 export const detectPhotoFolder = (photo) => {
   const uri = photo.uri.toLowerCase();
-  
-  if (uri.includes('screenshot')) return 'screenshots';
+
   if (uri.includes('whatsapp')) return 'whatsapp';
-  if (uri.includes('dcim') || uri.includes('camera')) return 'camera';
   if (uri.includes('download')) return 'downloads';
-  
+
   return null;
 };
